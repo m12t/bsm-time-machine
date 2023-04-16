@@ -120,6 +120,7 @@ class Position:
         sample=False,
         return_only=True,
         lrr_only=True,
+        simulations=500,
     ):
         self.df = df
         self.underlying = underlying
@@ -141,12 +142,13 @@ class Position:
         self.iv_min_threshold = iv_min_threshold
         self.iv_max_threshold = iv_max_threshold
         self.iv_greater_than = iv_greater_than
-        self.iv_less_than = iv_less_than
+        self.iv_less_than = iv_less_tha
         self.sample = sample
         self.return_only = return_only
         self.lrr_only = lrr_only
         self.subset_size = 0
         self.max_deviations = max_deviations
+        self.simulations = simulations
 
         # * The below offsets are for the 3D numpy array that is dyanamic regarding
         #   the number of positions. It does this by storing offsets and step_size.
@@ -534,7 +536,7 @@ class Position:
         a[:, self.__MAX_DOWNSWING_IDX] = np.maximum(0, spot_open * (1 - max_movement))
         a[:, self.__MAX_UPSWING_IDX] = spot_open * (1 + max_movement)
 
-    def _stress_portfolio(self, a: np.ndarray) -> None:
+    def _calc_position_risk(self, a: np.ndarray) -> None:
         """
         a risk-based test to determine overall risk
 
@@ -550,20 +552,30 @@ class Position:
               - every % in between
         """
 
-        depth = (
-            max(a[:, self.__MAX_UPSWING_IDX - self.__MAX_DOWNSWING_IDX])
-            // self.underlying.min_strike_gap
-        )
+        # * might need to use a.copy() and modify spot and sigma in-place so that the BSM
+        #   calculations work as intended...
 
-        tensor = np.repeat(a[:, :, np.newaxis], depth, axis=2)
+        # * add 2 columns to the end of the df for storing temp spot prices
+        #   and simulation position value
+        a = np.hstack((a, np.zeros((a.shape[0], 2))))
+        tmp_spot, tmp_value = -2, -1
+        for _ in range(self.simulations):
+            t = random.random() * self.holding_period / 252 + 0.000001
+            sig = np.random.choice(self.__SIGMA_OPEN_IDX)
+            a[:, tmp_spot] = np.random.uniform(
+                a[:, self.__MAX_DOWNSWING_IDX], a[:, self.__MAX_UPSWING_IDX]
+            )
+            a[:, -1] = np.random.random()
+            a[:, -2] = "calculate the value for each leg in an inner for loop"
+            a[:, self.__MAX_RETURN_IDX] = np.maximum(
+                a[:, self.__MAX_RETURN_IDX], a[:, -2]
+            )
 
         # use a[:, self.__MAX_DOWNSWING_IDX] and a[:, self.__MAX_UPSWING_IDX]
 
-        pass
-
-    def _calc_position_risk(self, a: np.ndarray) -> None:
+    def deprecated_calc_position_risk(self, a: np.ndarray) -> None:
         """
-
+        # THIS METHOD IS DEPRECATED IN FAVOR OF MONTE CARLO RISK ASSESSMENT
         * It's worth noting that the list `self.legs` is sorted
           (automatically on instantiation) in ascending order
           based on quantity and it needs to be so in order to
@@ -592,71 +604,72 @@ class Position:
           of a long position is only the premium, and adding the upside
           would skew the risk calculation.
         """
-        net_calls, net_puts = 0, 0
+        # net_calls, net_puts = 0, 0
 
-        for i, leg in enumerate(self.legs):
-            inc: Literal[1, -1] = 1 if leg.quantity > 0 else -1
-            step = i * self.__STEP_SIZE
-            premium: np.array = a[:, self.__PRICE_OPEN_OFFSET + step]
-            strike: np.array = a[:, self.__STRIKE_OFFSET + step]
+        # for i, leg in enumerate(self.legs):
+        #     inc: Literal[1, -1] = 1 if leg.quantity > 0 else -1
+        #     step = i * self.__STEP_SIZE
+        #     premium: np.array = a[:, self.__PRICE_OPEN_OFFSET + step]
+        #     strike: np.array = a[:, self.__STRIKE_OFFSET + step]
 
-            # TODO: extract extrinsic from premium. Selling deep ITM doesn't guarantee profit,
-            #       though it is possible to win all of it. Just not if you sell a deep ITM
-            #       strangle... how is this currently accounted for?
+        #     # TODO: extract extrinsic from premium. Selling deep ITM doesn't guarantee profit,
+        #     #       though it is possible to win all of it. Just not if you sell a deep ITM
+        #     #       strangle... how is this currently accounted for?
 
-            # * `ceil` and `floor` are realistic estimates of max underlying
-            #   moves based on several standard deviations. It's a necessary
-            #   work around to be able to limit the unlimited risk of a naked
-            #   call.
-            # * The standard deviation used to calculate floor and ceil is
-            #   user-tunable via the `max_deviations` Position class attribute.
-            ceil: np.array = a[:, self.__MAX_UPSWING_IDX + step]
-            floor: np.array = a[:, self.__MAX_DOWNSWING_IDX + step]
+        #     # * `ceil` and `floor` are realistic estimates of max underlying
+        #     #   moves based on several standard deviations. It's a necessary
+        #     #   work around to be able to limit the unlimited risk of a naked
+        #     #   call.
+        #     # * The standard deviation used to calculate floor and ceil is
+        #     #   user-tunable via the `max_deviations` Position class attribute.
+        #     ceil: np.array = a[:, self.__MAX_UPSWING_IDX + step]
+        #     floor: np.array = a[:, self.__MAX_DOWNSWING_IDX + step]
 
-            # calculate the max return
-            # TODO: there must be a way to solve for this...
-            #       the other thing is that the premium will not be zero
-            #       unless a position is held until maturity, which is
-            #       rarely the case...
-            # * another issue... max_risk shouldn't add both the risk of a short
-            #   call and a long call. TIMS/STANS is seeming to be inevitable here.
-            if leg.quantity > 0:
-                if leg.right == "put":
-                    a[:, self.__MAX_RETURN_IDX] += (strike - floor) - premium
-                else:
-                    a[:, self.__MAX_RETURN_IDX] += (ceil - strike) - premium
-            else:
-                # the max return of a short leg is the premium
-                a[:, self.__MAX_RETURN_IDX] += abs(leg.quantity) * premium
+        #     # calculate the max return
+        #     # TODO: there must be a way to solve for this...
+        #     #       the other thing is that the premium will not be zero
+        #     #       unless a position is held until maturity, which is
+        #     #       rarely the case...
+        #     # * another issue... max_risk shouldn't add both the risk of a short
+        #     #   call and a long call. TIMS/STANS is seeming to be inevitable here.
+        #     if leg.quantity > 0:
+        #         if leg.right == "put":
+        #             a[:, self.__MAX_RETURN_IDX] += (strike - floor) - premium
+        #         else:
+        #             a[:, self.__MAX_RETURN_IDX] += (ceil - strike) - premium
+        #     else:
+        #         # the max return of a short leg is the premium
+        #         a[:, self.__MAX_RETURN_IDX] += abs(leg.quantity) * premium
 
-            for _ in range(abs(leg.quantity)):
-                a[:, self.__MAX_RISK_IDX] += self.underlying.spread_loss
-                if leg.right == "put":
-                    net_puts += inc
-                    if net_puts < 0:
-                        # * This leg could be long or short.
-                        # * If it's long, it's guaranteed to be hedging a
-                        #   short position as indicated by this branch executing.
-                        # * The distinction for a hedging long position is important
-                        #   since in this case we add the net upside of the leg in order
-                        #   to offset one of the other short legs. If we just add the
-                        #   premium to the total risk, we fail to account for the risk
-                        #   offset the long leg provides against a short leg.
-                        a[:, self.__MAX_RISK_IDX] += -inc * ((strike - floor) - premium)
-                    else:
-                        # * this leg is long, risk is merely the premium paid.
-                        a[:, self.__MAX_RISK_IDX] += premium
-                else:
-                    net_calls += inc
-                    if net_calls < 0:
-                        # * This leg could be long or short.
-                        # * If it's long, it's guaranteed to be hedged
-                        #   since there are other short positions open
-                        #   indicated by this branch executing.
-                        a[:, self.__MAX_RISK_IDX] += -inc * ((ceil - strike) - premium)
-                    else:
-                        # * this leg is long, risk is merely the premium paid.
-                        a[:, self.__MAX_RISK_IDX] += premium
+        #     for _ in range(abs(leg.quantity)):
+        #         a[:, self.__MAX_RISK_IDX] += self.underlying.spread_loss
+        #         if leg.right == "put":
+        #             net_puts += inc
+        #             if net_puts < 0:
+        #                 # * This leg could be long or short.
+        #                 # * If it's long, it's guaranteed to be hedging a
+        #                 #   short position as indicated by this branch executing.
+        #                 # * The distinction for a hedging long position is important
+        #                 #   since in this case we add the net upside of the leg in order
+        #                 #   to offset one of the other short legs. If we just add the
+        #                 #   premium to the total risk, we fail to account for the risk
+        #                 #   offset the long leg provides against a short leg.
+        #                 a[:, self.__MAX_RISK_IDX] += -inc * ((strike - floor) - premium)
+        #             else:
+        #                 # * this leg is long, risk is merely the premium paid.
+        #                 a[:, self.__MAX_RISK_IDX] += premium
+        #         else:
+        #             net_calls += inc
+        #             if net_calls < 0:
+        #                 # * This leg could be long or short.
+        #                 # * If it's long, it's guaranteed to be hedged
+        #                 #   since there are other short positions open
+        #                 #   indicated by this branch executing.
+        #                 a[:, self.__MAX_RISK_IDX] += -inc * ((ceil - strike) - premium)
+        #             else:
+        #                 # * this leg is long, risk is merely the premium paid.
+        #                 a[:, self.__MAX_RISK_IDX] += premium
+        pass
 
     def _calc_returns(self, a: np.ndarray, i: int) -> None:
         """calculate the overall position return at the given period, i."""
