@@ -142,7 +142,7 @@ class Position:
         self.iv_min_threshold = iv_min_threshold
         self.iv_max_threshold = iv_max_threshold
         self.iv_greater_than = iv_greater_than
-        self.iv_less_than = iv_less_tha
+        self.iv_less_than = iv_less_than
         self.sample = sample
         self.return_only = return_only
         self.lrr_only = lrr_only
@@ -374,7 +374,6 @@ class Position:
         self._shift_ohlc(tensor[:, :, 0], 0)
         self._calc_strikes(tensor[:, :, 0])
         self._calc_fudge_factor(tensor[:, :, 0])
-        self._calc_position_risk(tensor[:, :, 0])
 
         for i in range(self.holding_period):
             # * this loop is where the magic happens:
@@ -385,6 +384,10 @@ class Position:
             #   holding period.
             self._shift_ohlc(tensor[:, :, i], i)
             self._calc_bsm(tensor, i)
+            if i == 0:
+                # * is relies on one run-through of `_calc_bsm()` for the
+                #   opening position values.
+                self._calc_position_risk(tensor[:, :, 0])
             self._calc_returns(tensor[:, :, :], i)
 
         # position value open (net opening credit for credits, net debit for debits)
@@ -437,7 +440,7 @@ class Position:
         a[:, self.__SIGMA_OPEN_IDX] = self.df["iv_open"].shift(-shift).to_numpy()
         a[:, self.__SIGMA_CLOSE_IDX] = self.df["iv_close"].shift(-shift).to_numpy()
 
-        for leg, i in enumerate(self.legs):
+        for i, leg in enumerate(self.legs):
             step = i * self.__STEP_SIZE
             # * Decrement the tenor of the option by `shift`.
             # * This method is called on each iteration of a loop, which calculates
@@ -454,7 +457,7 @@ class Position:
         sigma_open = a[:, self.__SIGMA_OPEN_IDX, i]
         sigma_close = a[:, self.__SIGMA_CLOSE_IDX, i]
 
-        for leg, j in enumerate(self.legs):
+        for j, leg in enumerate(self.legs):
             step = j * self.__STEP_SIZE
             k = a[:, self.__STRIKE_OFFSET + step, 0]  # strikes only exist at slice 0
             to = a[:, self.__TENOR_OPEN_OFFSET + step, i] / 252
@@ -467,14 +470,14 @@ class Position:
                 po = self._calc_put(spot_open, k, sigma_open, to)
                 pc = self._calc_put(spot_close, k, sigma_close, tc)
 
-            # * add the position premium tot he price offset (this is on a per-leg level)
+            # * add the position premium to the price offset (this is on a per-leg level)
             #   notice that the quantity is not applied here; the quantity is applied
             #   more precisely downstream in `_assess_position_risk()`.
             a[:, self.__PRICE_OPEN_OFFSET + step, i] = po
             a[:, self.__PRICE_CLOSE_OFFSET + step, i] = pc
 
             # * the overall position o/c values, unlike the leg-specific prices,
-            #   should account for the quantity.``
+            #   should account for the quantity.
             a[:, self.__NET_POS_OPEN_IDX, i] += po * leg.quantity
             a[:, self.__NET_POS_CLOSE_IDX, i] += pc * leg.quantity
 
@@ -551,27 +554,43 @@ class Position:
               - around the open
               - every % in between
         """
+        # 2 things:
+        # 1. calculating the starting position values (without any simulation)
+        #   > TODO: see `self.__PRICE_OPEN_OFFSET`
+        #   > so opening is negative, so `starting` = -a[:, self.__NET_POS_OPEN_IDX]
+        # 2. figuring out how to copy the array, overwrite it, and merge
+        #    the changes back into the original
 
-        # * might need to use a.copy() and modify spot and sigma in-place so that the BSM
-        #   calculations work as intended...
-
-        # * add 2 columns to the end of the df for storing temp spot prices
-        #   and simulation position value
-        a = np.hstack((a, np.zeros((a.shape[0], 2))))
-        tmp_spot, tmp_value = -2, -1
+        spot, sigma, val = (
+            np.zeros((a.shape[0])),
+            np.zeros((a.shape[0])),
+            np.zeros((a.shape[0])),
+        )
         for _ in range(self.simulations):
+            val[:] = 0  # zero out val array
             t = random.random() * self.holding_period / 252 + 0.000001
-            sig = np.random.choice(self.__SIGMA_OPEN_IDX)
-            a[:, tmp_spot] = np.random.uniform(
+            sigma = np.random.choice(self.__SIGMA_OPEN_IDX)
+            spot = np.random.uniform(
                 a[:, self.__MAX_DOWNSWING_IDX], a[:, self.__MAX_UPSWING_IDX]
             )
-            a[:, -1] = np.random.random()
-            a[:, -2] = "calculate the value for each leg in an inner for loop"
-            a[:, self.__MAX_RETURN_IDX] = np.maximum(
-                a[:, self.__MAX_RETURN_IDX], a[:, -2]
-            )
+            for i, leg in enumerate(self.legs):
+                step = i * self.__STEP_SIZE
+                k = a[:, self.__STRIKE_OFFSET + step]
+                if leg.right == "call":
+                    val += leg.quantity * self._calc_call(spot, k, sigma, t)
+                else:
+                    val += leg.quantity * self._calc_put(spot, k, sigma, t)
 
-        # use a[:, self.__MAX_DOWNSWING_IDX] and a[:, self.__MAX_UPSWING_IDX]
+            # * subtract the simulated value from the opening value.
+            # * the opening value is negative (due to the fact that it's
+            #   calculated within `_calc_bsm` and only the actualy
+            #   opening needs a negative value and is easily corrected
+            #   like below. All other uses for that value assume it's
+            #   the _closing_ value and therefore should be negative.)
+            val = (-a[:, self.__NET_POS_OPEN_IDX]) + val
+
+            a[:, self.__MAX_RISK_IDX] = np.minimum(a[:, self.__MAX_RISK_IDX], val)
+            a[:, self.__MAX_RETURN_IDX] = np.maximum(a[:, self.__MAX_RETURN_IDX], val)
 
     def deprecated_calc_position_risk(self, a: np.ndarray) -> None:
         """
@@ -695,7 +714,7 @@ class Position:
             indices = np.argmax(
                 a[:, self.__RISK_RETURN_IDX, :] <= self.stop_loss, axis=1
             )
-            for row, i in enumerate(indices):
+            for i, row in enumerate(indices):
                 if i == 0:
                     # the threshold was never reached
                     continue
@@ -710,7 +729,7 @@ class Position:
             indices = np.argmax(
                 a[:, self.__POM_RETURN_IDX, :] > self.pom_threshold, axis=1
             )
-            for row, i in enumerate(indices):
+            for i, row in enumerate(indices):
                 if i == 0:
                     # the threshold was never reached
                     continue
@@ -723,7 +742,7 @@ class Position:
             indices = np.argmax(
                 a[:, self.__RISK_RETURN_IDX, :] > self.rr_threshold, axis=1
             )
-            for row, i in enumerate(indices):
+            for i, row in enumerate(indices):
                 if i == 0:
                     # the threshold was never reached
                     continue
