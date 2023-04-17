@@ -106,8 +106,8 @@ class Position:
         sequential_positions: bool = True,
         riskfree_rate: float = 0.04,
         days_of_the_week: set = (0, 1, 2, 3, 4),
-        start_date: Optional[str(date)] = None,
-        end_date: Optional[str(date)] = None,
+        start_date: date = None,
+        end_date: date = None,
         vol_threshold: float = 0.0,
         lookback: int = 1,
         vol_greater_than: bool = True,
@@ -124,7 +124,7 @@ class Position:
     ):
         self.df = df
         self.underlying = underlying
-        self.legs = legs.sort(key=lambda x: x.quantity)
+        self.legs = legs
         self.holding_period = min(holding_period, min(l.tenor for l in legs))
         self.stop_loss = stop_loss
         self.scalping = scalping
@@ -185,6 +185,8 @@ class Position:
 
     def _post_init(self):
         """run some basic validation on the inputs"""
+        print("legs:", self.legs, type(self.legs))
+        assert self.legs
         for leg in self.legs:
             assert leg.quantity != 0
             assert isinstance(leg.quantity, int)
@@ -212,87 +214,88 @@ class Position:
         5.
 
         """
-
+        print("running...")
         # copy of df, narrowed down for a specific time period
         self._trim_df()
+        print("just trimmed df")
 
         a = self._backtest()  # BSM over hp
         # plot_positions(a, show=100, all=False, pom=True, risk=True)  # DAT
 
-        # all shift(s) must be before filtering so they don't skip days that are filtered out and get messed up
-        if self.vol_type == "max":
-            self.df["rolling_vol"] = (
-                self.df["max_vol"].shift(1).rolling(self.lookback).mean()
-            )
-        elif self.vol_type == "real":
-            self.df["rolling_vol"] = (
-                self.df["max_vol"].shift(1).rolling(self.lookback).mean()
-            )
-        else:
-            raise ValueError(
-                "invalid vol_type encountered. must be either `max` or `real`"
-            )
-        # spot movement over the hp
-        df["spot_movement"] = (df["close"].shift(-hp) - df["open"]) / df["open"]
-        # all shifts have been performed; clear out NaN rows.
-        df = clean_rows(df, lookback, hp)
+        # # all shift(s) must be before filtering so they don't skip days that are filtered out and get messed up
+        # if self.vol_type == "max":
+        #     self.df["rolling_vol"] = (
+        #         self.df["max_vol"].shift(1).rolling(self.lookback).mean()
+        #     )
+        # elif self.vol_type == "real":
+        #     self.df["rolling_vol"] = (
+        #         self.df["max_vol"].shift(1).rolling(self.lookback).mean()
+        #     )
+        # else:
+        #     raise ValueError(
+        #         "invalid vol_type encountered. must be either `max` or `real`"
+        #     )
+        # # spot movement over the hp
+        # df["spot_movement"] = (df["close"].shift(-hp) - df["open"]) / df["open"]
+        # # all shifts have been performed; clear out NaN rows.
+        # df = clean_rows(df, lookback, hp)
 
-        df = filter_iv(
-            df, iv_greater_than, iv_min_threshold, iv_less_than, iv_max_threshold
-        )
-        df = filter_vol(df, vol_greater_than, vol_threshold)
+        # df = filter_iv(
+        #     df, iv_greater_than, iv_min_threshold, iv_less_than, iv_max_threshold
+        # )
+        # df = filter_vol(df, vol_greater_than, vol_threshold)
 
-        if sequential_positions:
-            df = filter_sequential_positions(df, hp)
-            valid_days, num_winners = get_valid_days(df)
-            # used as denominator for % days valid post-sequential_positions filter
-            max_potential_days = subset_size // hp
-        else:
-            valid_days, num_winners = get_valid_days(df)
-            if self.sample:
-                # TODO: add an assert to enforce this
-                # sample is mutually exclusive with sequential_positions.
-                # optionally limit the rows to a random sample
-                self.df = sample_df()
+        # if sequential_positions:
+        #     df = filter_sequential_positions(df, hp)
+        #     valid_days, num_winners = get_valid_days(df)
+        #     # used as denominator for % days valid post-sequential_positions filter
+        #     max_potential_days = subset_size // hp
+        # else:
+        #     valid_days, num_winners = get_valid_days(df)
+        #     if self.sample:
+        #         # TODO: add an assert to enforce this
+        #         # sample is mutually exclusive with sequential_positions.
+        #         # optionally limit the rows to a random sample
+        #         self.df = sample_df()
 
-        # only calculate LRR on sequential_positions
-        p, b, c = calc_pbc(df)
+        # # only calculate LRR on sequential_positions
+        # p, b, c = calc_pbc(df)
 
-        expected_return = p * b - (1 - p) * abs(c)
-        if expected_return <= 0:
-            wager = 0
-        else:
-            wager = kelly(p, scale_b(b, c))
-        #         if not is_hedged:
-        #             wager = kelly(p, scale_b(b, c))
-        #         else:
-        #             wager = kelly(p, b)
-        lrr = (1 + wager * expected_return) ** num_winners - 1
-        if self.lrr_only:
-            return lrr, num_winners
-        df.reset_index(inplace=True, drop=True)
+        # expected_return = p * b - (1 - p) * abs(c)
+        # if expected_return <= 0:
+        #     wager = 0
+        # else:
+        #     wager = kelly(p, scale_b(b, c))
+        # #         if not is_hedged:
+        # #             wager = kelly(p, scale_b(b, c))
+        # #         else:
+        # #             wager = kelly(p, b)
+        # lrr = (1 + wager * expected_return) ** num_winners - 1
+        # if self.lrr_only:
+        #     return lrr, num_winners
+        # df.reset_index(inplace=True, drop=True)
 
-        print(df[["date", "spo", "short_put_k", "iv_open"]])
-        print(list(df))
+        # print(df[["date", "spo", "short_put_k", "iv_open"]])
+        # print(list(df))
 
-        if not self.return_only:
-            #         print_df(df, is_credit)
-            if plot:
-                # TODO: change these arguments to be parameters.
-                # TODO: filter pom and risk based on if they apply, eg. long-only positions have no PoM.
-                plot_positions(a, show=100, all=False, pom=True, risk=True)
-        return (
-            lrr,
-            valid_days,
-            num_winners,
-            p,
-            b,
-            c,
-            df,
-            expected_return,
-            wager,
-            subset_size,
-        )
+        # if not self.return_only:
+        #     #         print_df(df, is_credit)
+        #     if plot:
+        #         # TODO: change these arguments to be parameters.
+        #         # TODO: filter pom and risk based on if they apply, eg. long-only positions have no PoM.
+        #         plot_positions(a, show=100, all=False, pom=True, risk=True)
+        # return (
+        #     lrr,
+        #     valid_days,
+        #     num_winners,
+        #     p,
+        #     b,
+        #     c,
+        #     df,
+        #     expected_return,
+        #     wager,
+        #     subset_size,
+        # )
 
     def _trim_df(self):
         """
@@ -365,17 +368,22 @@ class Position:
         # * First create a 2D array, then add the strikes and duplicate that
         #   first 2D slice precisely `self.holding_period` times to make it 3D.
         height = self.df.shape[0]
-        width = self.__STEP_SIZE * len(self.legs) + self.__SIGMA_CLOSE_IDX + 1
+        width = self.__STRIKE_OFFSET + self.__STEP_SIZE * len(self.legs)
         depth = self.holding_period
         tensor = np.zeros((height, width, depth))
 
         # run these methods once here to calculate the strikes and max risk
         # `_shift_ohlc()` is idempotent, so safe to do this twice on slice 0.
         self._shift_ohlc(tensor[:, :, 0], 0)
+        print("just shifted")
         self._calc_strikes(tensor[:, :, 0])
+        print("just calculated_strikes")
+        print(tensor[0, self.__STRIKE_OFFSET, 0])
         self._calc_fudge_factor(tensor[:, :, 0])
+        print("just calculated fudge factor")
 
         for i in range(self.holding_period):
+            print("day:", i)
             # * this loop is where the magic happens:
             #   the price of each leg is calculated at each period in the
             #   holding period so that the net position value can be later
@@ -389,6 +397,8 @@ class Position:
                 #   opening position values.
                 self._calc_position_risk(tensor[:, :, 0])
             self._calc_returns(tensor[:, :, :], i)
+
+        print(tensor[0, :, 0])
 
         # position value open (net opening credit for credits, net debit for debits)
         self.df["net_pos_open"] = tensor[:, self.__NET_POS_OPEN_IDX, 0]
@@ -547,20 +557,7 @@ class Position:
           the max risk in a few eventualities.
 
         across a range of prices (and IV combos, though IV doesn't really matter in extreme moves), tenor
-
-        TODO: to be more efficiently about where to stress test:
-              - calculate prices around the strikes
-              - around ±3SD (should this be based on IV or historical average IV?)
-              - around the open
-              - every % in between
         """
-        # 2 things:
-        # 1. calculating the starting position values (without any simulation)
-        #   > TODO: see `self.__PRICE_OPEN_OFFSET`
-        #   > so opening is negative, so `starting` = -a[:, self.__NET_POS_OPEN_IDX]
-        # 2. figuring out how to copy the array, overwrite it, and merge
-        #    the changes back into the original
-
         spot, sigma, val = (
             np.zeros((a.shape[0])),
             np.zeros((a.shape[0])),
@@ -591,104 +588,6 @@ class Position:
 
             a[:, self.__MAX_RISK_IDX] = np.minimum(a[:, self.__MAX_RISK_IDX], val)
             a[:, self.__MAX_RETURN_IDX] = np.maximum(a[:, self.__MAX_RETURN_IDX], val)
-
-    def deprecated_calc_position_risk(self, a: np.ndarray) -> None:
-        """
-        # THIS METHOD IS DEPRECATED IN FAVOR OF MONTE CARLO RISK ASSESSMENT
-        * It's worth noting that the list `self.legs` is sorted
-          (automatically on instantiation) in ascending order
-          based on quantity and it needs to be so in order to
-          guarantee correctness of the below logic which relies
-          on short positions being evaluated before long ones.
-
-        * Below is example to give context for needing a sorted array
-          and why only under certain circumstances is the long
-          upside subtracted from max risk.
-        ### take the following option:
-        - strike: 100
-        - floor: 50
-        - premium: 5
-        - strike - floor - premium = $45
-        - max_risk_long = $5
-        - max_win_long = $45
-        - max_risk_short = $45
-        - max_win_short = $5
-
-        * If we have a short and a long position with the same strike,
-          they clearly offset, but only if you account for the upside
-          of the long leg. The below code will first iterate over short
-          legs and add the `max_risk_short` of $45. If/when it encounters
-          a long position, it will offset the short legs until there's
-          no longer any short legs of that right. At this point, the risk
-          of a long position is only the premium, and adding the upside
-          would skew the risk calculation.
-        """
-        # net_calls, net_puts = 0, 0
-
-        # for i, leg in enumerate(self.legs):
-        #     inc: Literal[1, -1] = 1 if leg.quantity > 0 else -1
-        #     step = i * self.__STEP_SIZE
-        #     premium: np.array = a[:, self.__PRICE_OPEN_OFFSET + step]
-        #     strike: np.array = a[:, self.__STRIKE_OFFSET + step]
-
-        #     # TODO: extract extrinsic from premium. Selling deep ITM doesn't guarantee profit,
-        #     #       though it is possible to win all of it. Just not if you sell a deep ITM
-        #     #       strangle... how is this currently accounted for?
-
-        #     # * `ceil` and `floor` are realistic estimates of max underlying
-        #     #   moves based on several standard deviations. It's a necessary
-        #     #   work around to be able to limit the unlimited risk of a naked
-        #     #   call.
-        #     # * The standard deviation used to calculate floor and ceil is
-        #     #   user-tunable via the `max_deviations` Position class attribute.
-        #     ceil: np.array = a[:, self.__MAX_UPSWING_IDX + step]
-        #     floor: np.array = a[:, self.__MAX_DOWNSWING_IDX + step]
-
-        #     # calculate the max return
-        #     # TODO: there must be a way to solve for this...
-        #     #       the other thing is that the premium will not be zero
-        #     #       unless a position is held until maturity, which is
-        #     #       rarely the case...
-        #     # * another issue... max_risk shouldn't add both the risk of a short
-        #     #   call and a long call. TIMS/STANS is seeming to be inevitable here.
-        #     if leg.quantity > 0:
-        #         if leg.right == "put":
-        #             a[:, self.__MAX_RETURN_IDX] += (strike - floor) - premium
-        #         else:
-        #             a[:, self.__MAX_RETURN_IDX] += (ceil - strike) - premium
-        #     else:
-        #         # the max return of a short leg is the premium
-        #         a[:, self.__MAX_RETURN_IDX] += abs(leg.quantity) * premium
-
-        #     for _ in range(abs(leg.quantity)):
-        #         a[:, self.__MAX_RISK_IDX] += self.underlying.spread_loss
-        #         if leg.right == "put":
-        #             net_puts += inc
-        #             if net_puts < 0:
-        #                 # * This leg could be long or short.
-        #                 # * If it's long, it's guaranteed to be hedging a
-        #                 #   short position as indicated by this branch executing.
-        #                 # * The distinction for a hedging long position is important
-        #                 #   since in this case we add the net upside of the leg in order
-        #                 #   to offset one of the other short legs. If we just add the
-        #                 #   premium to the total risk, we fail to account for the risk
-        #                 #   offset the long leg provides against a short leg.
-        #                 a[:, self.__MAX_RISK_IDX] += -inc * ((strike - floor) - premium)
-        #             else:
-        #                 # * this leg is long, risk is merely the premium paid.
-        #                 a[:, self.__MAX_RISK_IDX] += premium
-        #         else:
-        #             net_calls += inc
-        #             if net_calls < 0:
-        #                 # * This leg could be long or short.
-        #                 # * If it's long, it's guaranteed to be hedged
-        #                 #   since there are other short positions open
-        #                 #   indicated by this branch executing.
-        #                 a[:, self.__MAX_RISK_IDX] += -inc * ((ceil - strike) - premium)
-        #             else:
-        #                 # * this leg is long, risk is merely the premium paid.
-        #                 a[:, self.__MAX_RISK_IDX] += premium
-        pass
 
     def _calc_returns(self, a: np.ndarray, i: int) -> None:
         """calculate the overall position return at the given period, i."""
@@ -989,7 +888,7 @@ def get_consecutive_failures(
         return message
 
 
-def get_subset(start_date=None, end_date=None, df=df, lookback=0, hp=0):
+def get_subset():
     # * lookback and hp are here so that this subset filtering can be performed *before* calculating BSM prices
     #   for performance reasons. By adding hp to the end and subtracting lookback from the beginning, shifts
     #   in later functions can be performed and the beginning and end of the subset aren't NaN due to shifting
