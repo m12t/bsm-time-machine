@@ -120,7 +120,7 @@ class Position:
         sample=False,
         return_only=True,
         lrr_only=True,
-        simulations=500,
+        num_simulations=15000,
     ):
         self.df = df
         self.underlying = underlying
@@ -148,7 +148,7 @@ class Position:
         self.lrr_only = lrr_only
         self.subset_size = 0
         self.max_deviations = max_deviations
-        self.simulations = simulations
+        self.num_simulations = num_simulations
 
         # * The below offsets are for the 3D numpy array that is dyanamic regarding
         #   the number of positions. It does this by storing offsets and step_size.
@@ -383,7 +383,6 @@ class Position:
         print("just calculated fudge factor")
 
         for i in range(self.holding_period):
-            print("day:", i)
             # * this loop is where the magic happens:
             #   the price of each leg is calculated at each period in the
             #   holding period so that the net position value can be later
@@ -399,6 +398,7 @@ class Position:
             self._calc_returns(tensor[:, :, :], i)
 
         print(tensor[0, :, 0])
+        print(tensor[0, :, -1])
 
         # position value open (net opening credit for credits, net debit for debits)
         self.df["net_pos_open"] = tensor[:, self.__NET_POS_OPEN_IDX, 0]
@@ -558,12 +558,13 @@ class Position:
 
         across a range of prices (and IV combos, though IV doesn't really matter in extreme moves), tenor
         """
+        print("about to run the simulation...")  # rbf
         spot, sigma, val = (
             np.zeros((a.shape[0])),
             np.zeros((a.shape[0])),
             np.zeros((a.shape[0])),
         )
-        for _ in range(self.simulations):
+        for _ in range(self.num_simulations):
             val[:] = 0  # zero out val array
             t = random.random() * self.holding_period / 252 + 0.000001
             sigma = np.random.choice(self.__SIGMA_OPEN_IDX)
@@ -588,6 +589,8 @@ class Position:
 
             a[:, self.__MAX_RISK_IDX] = np.minimum(a[:, self.__MAX_RISK_IDX], val)
             a[:, self.__MAX_RETURN_IDX] = np.maximum(a[:, self.__MAX_RETURN_IDX], val)
+        print("max position risk:", a[:, self.__MAX_RISK_IDX])
+        print("max position return:", a[:, self.__MAX_RETURN_IDX])
 
     def _calc_returns(self, a: np.ndarray, i: int) -> None:
         """calculate the overall position return at the given period, i."""
