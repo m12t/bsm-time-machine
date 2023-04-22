@@ -405,7 +405,7 @@ class Position:
         self.df["max_risk"] = tensor[:, self.__MAX_RISK_IDX, 0]
 
         if self.scalping or self.stop_loss:
-            tensor = self.scalp_stoploss(tensor)
+            tensor = self._scalp_stoploss(tensor)
 
         # self.df["spot_open"] = tensor[:, self.__SPOT_OPEN_IDX, 0]
         # # spot price at the time the position was closed [hp] trading days after open
@@ -606,7 +606,20 @@ class Position:
         so scale the winners and losers accordingly."""
         return b / abs(c)
 
-    def scalp_stoploss(self, a):
+    def _scalp_stoploss(self, a):
+        """
+        _scalp_stoploss() oversees positions and simulated position exits based on:
+        * self.stop_loss: a negative float indicating the max risk return loss allowed
+        * one of {self.pom_threshold, self.risk_return_threshold}: which indicate
+          profit-taking threshold for returns
+            * eg. POM 0.5 == 50% of max possible
+            * eg RR 0.2 == 20% return on capital at risk
+        * based on how the stop_loss and scalping are simulated (by locking in the
+          value at the trigger point), it's possible to simulate a stoploss with
+          scalping due to the fact that the earliest event will "win" and overwrite
+          all future values, regardless of the order in which things were evaluated
+          in the code.
+        """
         if self.stop_loss:
             # * use np.argmax() on a boolean array to find the first truthy index,
             #   ie. return the first period that triggers a stop loss. This period
