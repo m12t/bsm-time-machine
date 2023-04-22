@@ -220,7 +220,7 @@ class Position:
         print("just trimmed df")
 
         a = self._backtest()  # BSM over hp
-        # plot_positions(a, show=100, all=False, pom=True, risk=True)  # DAT
+        self.plot(a, show=100, all=False, pom=True, risk=True)  # DAT
 
         # # all shift(s) must be before filtering so they don't skip days that are filtered out and get messed up
         # if self.vol_type == "max":
@@ -407,30 +407,30 @@ class Position:
         if self.scalping or self.stop_loss:
             tensor = self._scalp_stoploss(tensor)
 
-        # self.df["spot_open"] = tensor[:, self.__SPOT_OPEN_IDX, 0]
-        # # spot price at the time the position was closed [hp] trading days after open
-        # self.df["spot_close"] = tensor[:, self.__SPOT_CLOSE_IDX, -1]
+        self.df["spot_open"] = tensor[:, self.__SPOT_OPEN_IDX, 0]
+        # spot price at the time the position was closed [hp] trading days after open
+        self.df["spot_close"] = tensor[:, self.__SPOT_CLOSE_IDX, -1]
 
-        # # the highest net position value at a market open over the holding_period
-        # open_max = np.amax(tensor[:, self.__NET_POS_OPEN_IDX, :], axis=1)
-        # # the highest net position value at a market close over the holding_period
-        # close_max = np.amax(tensor[:, self.__NET_POS_CLOSE_IDX, :], axis=1)
-        # # the lowest net position value at a market open over the holding_period
-        # open_min = np.amin(tensor[:, self.__NET_POS_OPEN_IDX, :], axis=1)
-        # # the lowest net position value at a market close over the holding_period
-        # close_min = np.amin(tensor[:, self.__NET_POS_CLOSE_IDX, :], axis=1)
+        # the highest net position value at a market open over the holding_period
+        open_max = np.amax(tensor[:, self.__NET_POS_OPEN_IDX, :], axis=1)
+        # the highest net position value at a market close over the holding_period
+        close_max = np.amax(tensor[:, self.__NET_POS_CLOSE_IDX, :], axis=1)
+        # the lowest net position value at a market open over the holding_period
+        open_min = np.amin(tensor[:, self.__NET_POS_OPEN_IDX, :], axis=1)
+        # the lowest net position value at a market close over the holding_period
+        close_min = np.amin(tensor[:, self.__NET_POS_CLOSE_IDX, :], axis=1)
 
-        # # MAX position value (open, close) over the holding_period
-        # self.df["pos_max"] = np.maximum(open_max, close_max)
-        # # MIN position value (open, close) over the holding_period
-        # self.df["pos_min"] = np.minimum(open_min, close_min)
-        # self.df["risk_return"] = tensor[:, self.__RISK_RETURN_IDX, -1]
-        # self.df["pom_return"] = tensor[:, self.__POM_RETURN_IDX, -1]
-        # self.df["winner"] = (
-        #     self.df["risk_return"] >= 0
-        # )  # (bool), used by later functions. TODO: can this be removed or calculated later?
+        # MAX position value (open, close) over the holding_period
+        self.df["pos_max"] = np.maximum(open_max, close_max)
+        # MIN position value (open, close) over the holding_period
+        self.df["pos_min"] = np.minimum(open_min, close_min)
+        self.df["risk_return"] = tensor[:, self.__RISK_RETURN_IDX, -1]
+        self.df["pom_return"] = tensor[:, self.__POM_RETURN_IDX, -1]
+        self.df["winner"] = (
+            self.df["risk_return"] >= 0
+        )  # (bool), used by later functions. TODO: can this be removed or calculated later?
 
-        # # spot price at the time the position was opened ... ?
+        # spot price at the time the position was opened ... ?
         return tensor  # return a so it can be optionally plotted and df for further analysis
 
     def _shift_ohlc(self, a: np.ndarray, shift: int) -> None:
@@ -672,6 +672,54 @@ class Position:
                 # freeze the risk return at the time of scalp
                 a[row, self.__RISK_RETURN_IDX, tp:] = self.risk_return_threshold
         return a
+
+    def plot(self, a, show=100, all=False, pom=True, risk=True):
+        """this plots all positions, not just sequential positions."""
+        print("plotting...")
+        # negate the shifted rows (TODO: pass in hp as a parameter)
+        a = a[: -self.holding_period, :, :]
+        if risk:
+            # first, plot the percent of max return
+            rows = a.shape[0]
+            x = np.arange(a.shape[2])
+            if all:
+                for i in range(rows):
+                    y = a[i, self.__RISK_RETURN_IDX, :]
+                    plt.plot(x, y)
+            else:
+                for i in range(show):
+                    # sample the df
+                    row = int(np.random.random() * rows)
+                    y = a[row, self.__RISK_RETURN_IDX, :]
+                    plt.plot(x, y, alpha=0.25)  # , color='k')
+            mean = np.mean(a[:, self.__RISK_RETURN_IDX, :])
+            median = np.median(a[:, self.__RISK_RETURN_IDX, :])
+            print(f"rr mean: {100*mean:.2f}% | rr median: {100*median:.2f}%")
+            plt.axhline(mean, color="b", linestyle="solid", linewidth=1)
+            plt.axhline(median, color="r", linestyle="dashed", linewidth=1)
+            plt.title("Risk return")
+            plt.show()
+        if pom:
+            # now plot the risk return
+            rows = a.shape[0]
+            x = np.arange(a.shape[2])
+            if all:
+                for i in range(rows):
+                    y = a[i, self.__POM_RETURN_IDX, :]
+                    plt.plot(x, y)
+            else:
+                for i in range(show):
+                    # sample the df
+                    row = int(np.random.random() * rows)
+                    y = a[row, self.__POM_RETURN_IDX, :]
+                    plt.plot(x, y, alpha=0.25)  # , color='k')
+            mean = np.mean(a[:, self.__POM_RETURN_IDX, :])
+            median = np.median(a[:, self.__POM_RETURN_IDX, :])
+            print(f"PoM mean: {100*mean:.2f}% | PoM median: {100*median:.2f}%")
+            plt.axhline(mean, color="b", linestyle="solid", linewidth=1)
+            plt.axhline(median, color="r", linestyle="dashed", linewidth=1)
+            plt.title("POM return")
+            plt.show()
 
 
 """ <><><><><><><><><><><><><><><><><><><><> end class <><><><><><><><><><><><><><><><><><><><>"""
@@ -926,55 +974,6 @@ def get_subset():
         # +1 to include the last entry.
         end_date = df[df["date"] <= end_date].index[-1] + 1
     return df[start_date:end_date].copy()
-
-
-def plot_positions(a, show=100, all=False, pom=True, risk=True):
-    """this plots all positions, not just sequential positions."""
-    print("plotting...")
-    # negate the shifted rows (TODO: pass in hp as a parameter)
-    a = a[:-hp, :, :]
-    if risk:
-        # first, plot the percent of max return
-        rows = a.shape[0]
-        x = np.arange(a.shape[2])
-        if all:
-            for i in range(rows):
-                y = a[i, 23, :]
-                plt.plot(x, y)
-        else:
-            for i in range(show):
-                # sample the df
-                row = int(np.random.random() * rows)
-                y = a[row, 23, :]
-                plt.plot(x, y, alpha=0.25)  # , color='k')
-        mean = np.mean(a[:, 23, :])
-        median = np.median(a[:, 23, :])
-        print(f"rr mean: {100*mean:.2f}% | rr median: {100*median:.2f}%")
-        plt.axhline(mean, color="b", linestyle="solid", linewidth=1)
-        plt.axhline(median, color="r", linestyle="dashed", linewidth=1)
-        plt.title("Risk return")
-        plt.show()
-    if pom:
-        # now plot the risk return
-        rows = a.shape[0]
-        x = np.arange(a.shape[2])
-        if all:
-            for i in range(rows):
-                y = a[i, 24, :]
-                plt.plot(x, y)
-        else:
-            for i in range(show):
-                # sample the df
-                row = int(np.random.random() * rows)
-                y = a[row, 24, :]
-                plt.plot(x, y, alpha=0.25)  # , color='k')
-        mean = np.mean(a[:, 24, :])
-        median = np.median(a[:, 24, :])
-        print(f"PoM mean: {100*mean:.2f}% | PoM median: {100*median:.2f}%")
-        plt.axhline(mean, color="b", linestyle="solid", linewidth=1)
-        plt.axhline(median, color="r", linestyle="dashed", linewidth=1)
-        plt.title("POM return")
-        plt.show()
 
 
 def plot_histograms(df):
