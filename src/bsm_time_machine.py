@@ -397,9 +397,6 @@ class Position:
                 self._calc_position_risk(tensor[:, :, 0])
             self._calc_returns(tensor[:, :, :], i)
 
-        print(tensor[0, :, 0])
-        print(tensor[0, :, -1])
-
         # position value open (net opening credit for credits, net debit for debits)
         self.df["net_pos_open"] = tensor[:, self.__NET_POS_OPEN_IDX, 0]
         # position_value_close (net closing debit for credits, net credit for debits)
@@ -407,8 +404,8 @@ class Position:
 
         self.df["max_risk"] = tensor[:, self.__MAX_RISK_IDX, 0]
 
-        # if self.scalping or self.stop_loss:
-        #     tensor = self.scalp_stoploss(tensor)
+        if self.scalping or self.stop_loss:
+            tensor = self.scalp_stoploss(tensor)
 
         # self.df["spot_open"] = tensor[:, self.__SPOT_OPEN_IDX, 0]
         # # spot price at the time the position was closed [hp] trading days after open
@@ -558,7 +555,8 @@ class Position:
 
         across a range of prices (and IV combos, though IV doesn't really matter in extreme moves), tenor
         """
-        print("about to run the simulation...")  # rbf
+        # * 3 1D arrays to store generated spot prices, sigma values,
+        #   and portfolio outcome values.
         spot, sigma, val = (
             np.zeros((a.shape[0])),
             np.zeros((a.shape[0])),
@@ -572,8 +570,7 @@ class Position:
                 a[:, self.__MAX_DOWNSWING_IDX], a[:, self.__MAX_UPSWING_IDX]
             )
             for i, leg in enumerate(self.legs):
-                step = i * self.__STEP_SIZE
-                k = a[:, self.__STRIKE_OFFSET + step]
+                k = a[:, self.__STRIKE_OFFSET + i * self.__STEP_SIZE]
                 if leg.right == "call":
                     val += leg.quantity * self._calc_call(spot, k, sigma, t)
                 else:
@@ -589,8 +586,6 @@ class Position:
 
             a[:, self.__MAX_RISK_IDX] = np.minimum(a[:, self.__MAX_RISK_IDX], val)
             a[:, self.__MAX_RETURN_IDX] = np.maximum(a[:, self.__MAX_RETURN_IDX], val)
-        print("max position risk:", a[:, self.__MAX_RISK_IDX])
-        print("max position return:", a[:, self.__MAX_RETURN_IDX])
 
     def _calc_returns(self, a: np.ndarray, i: int) -> None:
         """calculate the overall position return at the given period, i."""
@@ -601,29 +596,46 @@ class Position:
         a[:, self.__POM_RETURN_IDX, i] = nvc / a[:, self.__MAX_RETURN_IDX, 0]
 
     def kelly(self, p: float, b: float):
-        # the kelly criterion for wagering
-        # p: probability of win
-        # b: net payout for a win
+        """the kelly criterion for wagering
+        p: probability of win
+        b: net payout for a win"""
         return p + (p - 1) / b
 
     def scale_b(self, b: float, c: float):
-        # * the kelly criterion expects max loss of 1.0
-        #   so scale the winners and losers accordingly.
+        """the kelly criterion expects max loss of 1.0
+        so scale the winners and losers accordingly."""
         return b / abs(c)
 
     def scalp_stoploss(self, a):
         if self.stop_loss:
-            indices = np.argmax(
+            # * use np.argmax() on a boolean array to find the first truthy index,
+            #   ie. return the first period that triggers a stop loss. This period
+            #   is then "locked in" for the rest of the holding period, simulating
+            #   the stoploss triggering.
+            # axis == 2???
+            trigger_points = np.argmax(
                 a[:, self.__RISK_RETURN_IDX, :] <= self.stop_loss, axis=1
             )
-            for i, row in enumerate(indices):
-                if i == 0:
+            for row, tp in enumerate(trigger_points):
+                if tp == 0 and a[row, self.__RISK_RETURN_IDX, tp] > self.stop_loss:
                     # the threshold was never reached
                     continue
                 # freeze the PoM return at the time of scalp
-                a[row, self.__POM_RETURN_IDX, i:] = a[row, self.__POM_RETURN_IDX, i]
+                print(
+                    "a.shape:",
+                    a.shape,
+                    "row:",
+                    row,
+                    "tp:",
+                    tp,
+                    "trigger_points.shape:",
+                    trigger_points.shape,
+                )
+                a[row, self.__POM_RETURN_IDX, tp:] = a[row, self.__POM_RETURN_IDX, tp]
                 # freeze the risk return at the time of scalp
-                a[row, self.__RISK_RETURN_IDX, i:] = a[row, self.__RISK_RETURN_IDX, i]
+                a[row, self.__RISK_RETURN_IDX, tp:] = a[row, self.__RISK_RETURN_IDX, tp]
+                # TODO: why is POM positive when stoploss triggers sometimes?
+        print("done")
         if not self.scalping:
             # prevent the rest from executing
             return a
@@ -637,12 +649,10 @@ class Position:
                     continue
                 a[row, self.__POM_RETURN_IDX, i:] = self.pom_threshold
                 a[row, self.__RISK_RETURN_IDX, i:] = a[row, self.__RISK_RETURN_IDX, i]
-        #         a[:, self.__POM_RETURN_INDEX, indices:] = pom_threshold       # freeze the PoM return at the time of scalp
-        #         a[:, self.__RISK_RETURN_INDEX, indices:] = a[:, self.__RISK_RETURN_INDEX, indices]  # freeze the risk return at the time of scalp
         else:
             #         # scalp on risk return
             indices = np.argmax(
-                a[:, self.__RISK_RETURN_IDX, :] > self.rr_threshold, axis=1
+                a[:, self.__RISK_RETURN_IDX, :] > self.risk_return_threshold, axis=1
             )
             for i, row in enumerate(indices):
                 if i == 0:
@@ -651,7 +661,7 @@ class Position:
                 # freeze the PoM return at the time of scalp
                 a[row, self.__POM_RETURN_IDX, i:] = a[row, self.__POM_RETURN_IDX, i]
                 # freeze the risk return at the time of scalp
-                a[row, self.__RISK_RETURN_IDX, i:] = self.rr_threshold
+                a[row, self.__RISK_RETURN_IDX, i:] = self.risk_return_threshold
         return a
 
 
