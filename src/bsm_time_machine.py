@@ -618,50 +618,46 @@ class Position:
             )
             for row, tp in enumerate(trigger_points):
                 if tp == 0 and a[row, self.__RISK_RETURN_IDX, tp] > self.stop_loss:
-                    # the threshold was never reached
+                    # * if the trigger point is zero it means that either the stoploss
+                    #   was never reached or that it was reached immediately.
+                    # * first check for tp == 0, then check that the risk return at
+                    #   index 0 is greater than the stoploss. If it is, we know that
+                    #   the stoploss never triggers and we need to skip the below
+                    #   logic (which would lock in the risk return at index 0).
                     continue
                 # freeze the PoM return at the time of scalp
-                print(
-                    "a.shape:",
-                    a.shape,
-                    "row:",
-                    row,
-                    "tp:",
-                    tp,
-                    "trigger_points.shape:",
-                    trigger_points.shape,
-                )
                 a[row, self.__POM_RETURN_IDX, tp:] = a[row, self.__POM_RETURN_IDX, tp]
                 # freeze the risk return at the time of scalp
                 a[row, self.__RISK_RETURN_IDX, tp:] = a[row, self.__RISK_RETURN_IDX, tp]
-                # TODO: why is POM positive when stoploss triggers sometimes?
-        print("done")
+                # TODO: find out why is POM positive when stoploss triggers sometimes?
         if not self.scalping:
             # prevent the rest from executing
             return a
         if self.pom_threshold:
             indices = np.argmax(
-                a[:, self.__POM_RETURN_IDX, :] > self.pom_threshold, axis=1
+                a[:, self.__POM_RETURN_IDX, :] >= self.pom_threshold, axis=1
             )
-            for i, row in enumerate(indices):
-                if i == 0:
+            for row, tp in enumerate(indices):
+                if tp == 0 and a[row, self.__POM_RETURN_IDX, tp] < self.pom_threshold:
                     # the threshold was never reached
                     continue
-                a[row, self.__POM_RETURN_IDX, i:] = self.pom_threshold
-                a[row, self.__RISK_RETURN_IDX, i:] = a[row, self.__RISK_RETURN_IDX, i]
+                a[row, self.__POM_RETURN_IDX, tp:] = self.pom_threshold
+                a[row, self.__RISK_RETURN_IDX, tp:] = a[row, self.__RISK_RETURN_IDX, tp]
         else:
-            #         # scalp on risk return
+            # scalp on risk return
             indices = np.argmax(
-                a[:, self.__RISK_RETURN_IDX, :] > self.risk_return_threshold, axis=1
+                a[:, self.__RISK_RETURN_IDX, :] >= self.risk_return_threshold, axis=1
             )
-            for i, row in enumerate(indices):
-                if i == 0:
+            for row, tp in enumerate(indices):
+                if tp == 0 and (
+                    a[row, self.__RISK_RETURN_IDX, tp] < self.risk_return_threshold
+                ):
                     # the threshold was never reached
                     continue
                 # freeze the PoM return at the time of scalp
-                a[row, self.__POM_RETURN_IDX, i:] = a[row, self.__POM_RETURN_IDX, i]
+                a[row, self.__POM_RETURN_IDX, tp:] = a[row, self.__POM_RETURN_IDX, tp]
                 # freeze the risk return at the time of scalp
-                a[row, self.__RISK_RETURN_IDX, i:] = self.risk_return_threshold
+                a[row, self.__RISK_RETURN_IDX, tp:] = self.risk_return_threshold
         return a
 
 
