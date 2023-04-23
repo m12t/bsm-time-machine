@@ -62,5 +62,4 @@ venv/
 # env vars
 .env
 
-src/sample_usage.py
-src/tasklist.md
+bsm_time_machine/tasklist.md

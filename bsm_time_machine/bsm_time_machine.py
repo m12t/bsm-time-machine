@@ -3,7 +3,7 @@ import time
 import random
 from datetime import datetime, date, timedelta
 from dataclasses import dataclass
-from typing import Optional, List, Literal
+from typing import Optional, List, Tuple
 
 from scipy.stats import norm
 import numpy as np
@@ -71,25 +71,22 @@ class Underlying:
     def __init__(
         self,
         symbol: str = "",
-        min_tick: float = 0.05,
         spread_loss: float = 0.05,
         min_strike_gap: int = 5,
     ):
         self.symbol = symbol
-        self.min_tick = min_tick
         self.spread_loss = spread_loss
         self.min_strike_gap = min_strike_gap
 
 
 class Position:
     """
-    # * The Position class takes arguments on instantiation
-    #   that define the parameters you'd like to backtest.
-    # * All class attributes are public and can be directly
-    #   modified as needed between tests.
-    # * The only public method of the class is `run()`, which
-    #   runs the backtest and returns a summary and optionally
-    #   plots the data.
+    * The Position class takes arguments on instantiation
+      that define the parameters you'd like to backtest.
+    * All class attributes are public and can be directly
+      modified as needed between tests.
+    * The 2 public methods of the class are `run()`, which
+      runs the backtest and `plot()` to optionally plot the results.
 
     """
 
@@ -146,7 +143,6 @@ class Position:
         self.sample = sample
         self.return_only = return_only
         self.lrr_only = lrr_only
-        self.subset_size = 0
         self.max_deviations = max_deviations
         self.num_simulations = num_simulations
 
@@ -181,17 +177,24 @@ class Position:
         # eg. id_price_o, id_tenor_o, etc.
         self.__STEP_SIZE = self.__TENOR_CLOSE_OFFSET - self.__STRIKE_OFFSET + 1
 
+        # placeholder vals that get populated downstream for other uses:
         self.tensor: np.ndarray = None  # placeholder
-
+        self.pbc: Tuple = None
+        self.lrr: float = 0.0
+        self.num_valid_days: int = 0
+        self.num_winners: int = 0
+        self.expected_return: float = 0.0
+        self.wager: float = 0.0
         self._post_init()
 
     def _post_init(self):
         """run some basic validation on the inputs"""
-        print("legs:", self.legs, type(self.legs))
         assert self.legs
         for leg in self.legs:
             assert leg.quantity != 0
             assert isinstance(leg.quantity, int)
+
+        assert self.vol_type in {"max", "real"}
 
         assert self.df is not None
 
@@ -215,13 +218,10 @@ class Position:
             self.df["rolling_vol"] = (
                 self.df["max_vol"].shift(1).rolling(self.lookback).mean()
             )
-        elif self.vol_type == "real":
-            self.df["rolling_vol"] = (
-                self.df["max_vol"].shift(1).rolling(self.lookback).mean()
-            )
         else:
-            raise ValueError(
-                "invalid vol_type encountered. must be either `max` or `real`"
+            # use realized vol
+            self.df["rolling_vol"] = (
+                self.df["real_vol"].shift(1).rolling(self.lookback).mean()
             )
         # spot movement over the hp
         self.df["spot_movement"] = (
@@ -234,11 +234,9 @@ class Position:
 
         if self.sequential_positions:
             self._filter_sequential_positions()
-            valid_days, num_winners = self._get_valid_days()
-            # used as denominator for % days valid post-sequential_positions filter
-            max_potential_days = self.subset_size // self.holding_period
+            self.num_valid_days, self.num_winners = self._get_valid_days()
         else:
-            valid_days, num_winners = self._get_valid_days()
+            self.num_valid_days, self.num_winners = self._get_valid_days()
             if self.sample:
                 # sample is mutually exclusive with sequential_positions.
                 # optionally limit the rows to a random sample
@@ -246,38 +244,16 @@ class Position:
 
         # only calculate LRR on sequential_positions
         p, b, c = self._calc_pbc()
+        self.pbc = (p, b, c)
 
-        expected_return = p * b - (1 - p) * abs(c)
-        if expected_return <= 0:
-            wager = 0
+        self.expected_return = p * b - (1 - p) * abs(c)
+        if self.expected_return <= 0:
+            self.wager = 0
         else:
-            wager = self._kelly(p, self._scale_b(b, c))
-        lrr = (1 + wager * expected_return) ** num_winners - 1
-        if self.lrr_only:
-            return lrr, num_winners
+            self.wager = self._kelly(p, self._scale_b(b, c))
+        self.lrr = (1 + self.wager * self.expected_return) ** self.num_winners - 1
+
         self.df.reset_index(inplace=True, drop=True)
-
-        print(self.df[["date", "iv_open", "pom_return"]])
-        print(list(self.df))
-
-        # if not self.return_only:
-        #     #         print_df(df, is_credit)
-        #     if plot:
-        #         # TODO: change these arguments to be parameters.
-        #         # TODO: filter pom and risk based on if they apply, eg. long-only positions have no PoM.
-        #         plot_positions(a, show=100, all=False, pom=True, risk=True)
-        # return (
-        #     lrr,
-        #     valid_days,
-        #     num_winners,
-        #     p,
-        #     b,
-        #     c,
-        #     df,
-        #     expected_return,
-        #     wager,
-        #     subset_size,
-        # )
 
     def _trim_df(self):
         """
@@ -299,7 +275,6 @@ class Position:
                 self.df[self.df["date"] <= self.end_date].index[-1] + 1
             )  # +1 to include the last entry.
         self.df = self.df[start:end].copy()
-        self.subset_size = len(self.df)  # used in calculations later
 
     def _parse_relative_strike(
         self,
@@ -357,12 +332,8 @@ class Position:
         # run these methods once here to calculate the strikes and max risk
         # `_shift_ohlc()` is idempotent, so safe to do this twice on slice 0.
         self._shift_ohlc(tensor[:, :, 0], 0)
-        print("just shifted")  # rbf
         self._calc_strikes(tensor[:, :, 0])
-        print("just calculated_strikes")  # rbf
-        print(tensor[0, self.__STRIKE_OFFSET, 0])
         self._calc_fudge_factor(tensor[:, :, 0])
-        print("just calculated fudge factor")  # rbf
 
         for i in range(self.holding_period):
             # * this loop is where the magic happens:
@@ -379,6 +350,7 @@ class Position:
                 self._calc_position_risk(tensor[:, :, 0])
             self._calc_returns(tensor[:, :, :], i)
 
+        tensor = np.nan_to_num(tensor)  # clear out NaN values and set them to 0
         # position value open (net opening credit for credits, net debit for debits)
         self.df["net_pos_open"] = tensor[:, self.__NET_POS_OPEN_IDX, 0]
         # position_value_close (net closing debit for credits, net credit for debits)
@@ -528,7 +500,7 @@ class Position:
         a[:, self.__MAX_DOWNSWING_IDX] = np.maximum(0, spot_open * (1 - max_movement))
         a[:, self.__MAX_UPSWING_IDX] = spot_open * (1 + max_movement)
 
-    def _calc_position_risk(self, a: np.ndarray) -> None:
+    def _calc_position_risk(self, a: np.ndarray, plot: bool = False) -> None:
         """
         a risk-based test to determine overall risk
 
@@ -557,6 +529,11 @@ class Position:
                     val += leg.quantity * self._calc_call(spot, k, sigma, t)
                 else:
                     val += leg.quantity * self._calc_put(spot, k, sigma, t)
+
+            if plot:
+                # * just grab the first position since the payoff diagram should be
+                #   be the same for all positions
+                plt.scatter(spot[0], val[0], s=1)
 
             # * subtract the simulated value from the opening value.
             # * the opening value is negative (due to the fact that it's
@@ -706,6 +683,15 @@ class Position:
             plt.title("POM return")
             plt.show()
 
+    def plot_payoff(self):
+        self._calc_position_risk(self.tensor[:, :, 0], plot=True)
+        plt.title("spot vs position value")
+        plt.grid(axis="y")
+        plt.show()
+
+    def to_pickle(self, path: str) -> None:
+        self.df.to_pickle(path)
+
     def _clean_rows(self):
         if self.holding_period > 0:
             # ignore the first and last few rows that will be NaN due to shift()s above
@@ -715,9 +701,38 @@ class Position:
             # just ignore the first rows
             self.df = self.df[self.start_date :]
 
-    def todo_analyze_results(self, df):
-        y = df["risk_return"]  # the y axis is returns
-        subjects = df[
+    def _add_spot_returns(self):
+        """calculate the spot returns from open"""
+        # shift(1) is to prevent look-ahead bias
+        self.df["1_day_return"] = (
+            self.df["close"].shift(1) - self.df["open"].shift(2)
+        ) / self.df["open"].shift(2)
+        self.df["20_day_avg_daily_return"] = (
+            self.df["1_day_return"].shift(1).rolling(20).mean()
+        )
+        self.df["5_day_return"] = (
+            self.df["close"].shift(1) - self.df["open"].shift(5)
+        ) / self.df["open"].shift(5)
+        self.df["10_day_return"] = (
+            self.df["close"].shift(1) - self.df["open"].shift(10)
+        ) / self.df["open"].shift(10)
+        self.df["15_day_return"] = (
+            self.df["close"].shift(1) - self.df["open"].shift(15)
+        ) / self.df["open"].shift(15)
+        self.df["20_day_return"] = (
+            self.df["close"].shift(1) - self.df["open"].shift(20)
+        ) / self.df["open"].shift(20)
+        self.df["50_day_return"] = (
+            self.df["close"].shift(1) - self.df["open"].shift(50)
+        ) / self.df["open"].shift(50)
+        self.df["100_day_return"] = (
+            self.df["close"].shift(1) - self.df["open"].shift(100)
+        ) / self.df["open"].shift(100)
+
+    def analyze_results(self):
+        self._add_spot_returns()
+        y = self.df["risk_return"]  # the y axis is returns
+        subjects = self.df[
             [
                 "iv_open",
                 "rolling_vol",
@@ -736,10 +751,10 @@ class Position:
         for subject in subjects:
             # * calculate some regressions and plot
             #   scatterplots with regression imbedded
-            x = df[subject]
+            x = self.df[subject]
             try:
                 m, b = np.polyfit(x, y, 1)
-            except np.linalg.LinAlgError:
+            except (np.linalg.LinAlgError, TypeError):
                 continue
             yp = np.polyval([m, b], x)
             plt.plot(x, yp)
