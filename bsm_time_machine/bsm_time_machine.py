@@ -115,6 +115,22 @@ class Underlying:
         self.spread_loss = spread_loss
         self.min_strike_gap = min_strike_gap
 
+        self._post_init()
+
+    def _post_init(self):
+        if not isinstance(self.spread_loss, float):
+            raise TypeError("spread_loss must be of type <float>")
+        if self.spread_loss < 0.0:
+            raise ValueError("spread_loss must be positive")
+
+        if not (
+            isinstance(self.min_strike_gap, int)
+            or isinstance(self.min_strike_gap, float)
+        ):
+            raise TypeError("min_strike_gap must be numeric")
+        if self.min_strike_gap < 0:
+            raise ValueError("min_strike_gap must be positive")
+
 
 class Position:
     """
@@ -886,6 +902,8 @@ class Position:
             self.df["spot_movement"].abs().median()
         )  # median is more useful than mean.
         print("=====================================")
+        print(f"\t\tgenerating report for {self.underlying.symbol}")
+        print("-------------------------------------")
         print(
             f"\n{100*self.num_valid_days/(len(self.df) - self.holding_period - self.lookback):.1f}% of days meet criteria ({self.num_valid_days})"
         )

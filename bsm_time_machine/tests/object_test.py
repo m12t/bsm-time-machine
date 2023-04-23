@@ -69,3 +69,39 @@ def test_invalid_option_creation(relative_strike, tenor, quantity, excep):
         Call(relative_strike, tenor, quantity)
     with pytest.raises(excep):
         Put(relative_strike, tenor, quantity)
+
+
+@pytest.mark.parametrize(
+    "symbol,spread_loss,min_strike_gap",
+    [
+        ("SPX", 0.05, 5),
+        ("SPX", 0.10, 10),
+        ("SPX", 0.05, 5.0),
+        ("SPX", 0.3210, 1.34280),
+    ],
+)
+def test_valid_underlying_creation(symbol, spread_loss, min_strike_gap):
+    u = Underlying(symbol, spread_loss, min_strike_gap)
+    assert u.symbol == symbol
+    assert u.spread_loss == spread_loss
+    assert u.min_strike_gap == min_strike_gap
+
+
+@pytest.mark.parametrize(
+    "symbol,spread_loss,min_strike_gap,excep",
+    [
+        # test spread_loss
+        ("SPX", 5, 5, TypeError),
+        ("SPX", None, 5, TypeError),
+        ("SPX", "0.05", 5, TypeError),
+        ("SPX", -5.0, 10, ValueError),
+        # test min_strike_gap
+        ("SPX", 0.05, None, TypeError),
+        ("SPX", 0.05, "5", TypeError),
+        ("SPX", 0.05, -1, ValueError),
+        ("SPX", 0.05, -1.0, ValueError),
+    ],
+)
+def test_invalid_underlying_creation(symbol, spread_loss, min_strike_gap, excep):
+    with pytest.raises(excep):
+        Underlying(symbol, spread_loss, min_strike_gap)
