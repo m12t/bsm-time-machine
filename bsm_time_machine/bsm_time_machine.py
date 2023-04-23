@@ -530,11 +530,6 @@ class Position:
                 else:
                     val += leg.quantity * self._calc_put(spot, k, sigma, t)
 
-            if plot:
-                # * just grab the first position since the payoff diagram should be
-                #   be the same for all positions
-                plt.scatter(spot[0], val[0], s=1)
-
             # * subtract the simulated value from the opening value.
             # * the opening value is negative (due to the fact that it's
             #   calculated within `_calc_bsm` and only the actualy
@@ -545,6 +540,11 @@ class Position:
 
             a[:, self.__MAX_RISK_IDX] = np.minimum(a[:, self.__MAX_RISK_IDX], val)
             a[:, self.__MAX_RETURN_IDX] = np.maximum(a[:, self.__MAX_RETURN_IDX], val)
+
+            if plot:
+                # * just grab the first position since the payoff diagram should be
+                #   be the same for all positions
+                plt.scatter(spot[-1], val[-1], s=1)
 
     def _calc_returns(self, a: np.ndarray, i: int) -> None:
         """calculate the overall position return at the given period, i."""

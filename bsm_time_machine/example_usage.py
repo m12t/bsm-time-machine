@@ -40,14 +40,17 @@ long_call = Call("1.2 x", 45, -1)
 p = Position(
     df,
     underlying=u,
-    legs=[Call("2 SD", 50, -1), Put("2 SD", 50, -1)],  # simply wrap each leg in a list
-    holding_period=50,
+    legs=[
+        Call("0.2 SD", 5, -1),
+        Put("0.2 SD", 5, -1),
+    ],  # simply wrap each leg in a list
+    holding_period=5,
     stop_loss=-0.56,
     max_deviations=3,
     scalping=True,
     sequential_positions=True,
     pom_threshold=0.63,
-    num_simulations=10000,
+    num_simulations=500,
     lrr_only=False,
     vol_threshold=2.0,
     lookback=3,
