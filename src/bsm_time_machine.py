@@ -181,6 +181,8 @@ class Position:
         # eg. id_price_o, id_tenor_o, etc.
         self.__STEP_SIZE = self.__TENOR_CLOSE_OFFSET - self.__STRIKE_OFFSET + 1
 
+        self.tensor: np.ndarray = None  # placeholder
+
         self._post_init()
 
     def _post_init(self):
@@ -201,82 +203,62 @@ class Position:
 
     def run(self):
         """
-        what are the steps when the engine is `run`??
-
-        1. get_subset()
-            - shift/trim the dates of the df
-        2. calculate the option strikes for each date in the df
-            - this will need to be revamped for the new positions list
-        2.5 (might need to calculate the total risk?)
-        3. calculate the BSM prices in a 2D array across the holding period
-            - this function will also need an overhaul to be dynamic and use the ID instead of
-        4. filter the df for things like trading days, filter IV and realized vol, clean df
-        5.
-
+        run a simulation with the given params
         """
-        print("running...")
         # copy of df, narrowed down for a specific time period
         self._trim_df()
-        print("just trimmed df")
 
-        a = self._backtest()  # BSM over hp
-        self.plot(a, show=100, all=False, pom=True, risk=True)  # DAT
+        self._backtest()  # BSM over hp
 
-        # # all shift(s) must be before filtering so they don't skip days that are filtered out and get messed up
-        # if self.vol_type == "max":
-        #     self.df["rolling_vol"] = (
-        #         self.df["max_vol"].shift(1).rolling(self.lookback).mean()
-        #     )
-        # elif self.vol_type == "real":
-        #     self.df["rolling_vol"] = (
-        #         self.df["max_vol"].shift(1).rolling(self.lookback).mean()
-        #     )
-        # else:
-        #     raise ValueError(
-        #         "invalid vol_type encountered. must be either `max` or `real`"
-        #     )
-        # # spot movement over the hp
-        # df["spot_movement"] = (df["close"].shift(-hp) - df["open"]) / df["open"]
-        # # all shifts have been performed; clear out NaN rows.
-        # df = clean_rows(df, lookback, hp)
+        # all shift(s) must be before filtering so they don't skip days that are filtered out and get messed up
+        if self.vol_type == "max":
+            self.df["rolling_vol"] = (
+                self.df["max_vol"].shift(1).rolling(self.lookback).mean()
+            )
+        elif self.vol_type == "real":
+            self.df["rolling_vol"] = (
+                self.df["max_vol"].shift(1).rolling(self.lookback).mean()
+            )
+        else:
+            raise ValueError(
+                "invalid vol_type encountered. must be either `max` or `real`"
+            )
+        # spot movement over the hp
+        self.df["spot_movement"] = (
+            self.df["close"].shift(-self.holding_period) - self.df["open"]
+        ) / self.df["open"]
+        # all shifts have been performed; clear out NaN rows.
+        self._clean_rows()
+        self._filter_iv()
+        self._filter_vol()
 
-        # df = filter_iv(
-        #     df, iv_greater_than, iv_min_threshold, iv_less_than, iv_max_threshold
-        # )
-        # df = filter_vol(df, vol_greater_than, vol_threshold)
+        if self.sequential_positions:
+            self._filter_sequential_positions()
+            valid_days, num_winners = self._get_valid_days()
+            # used as denominator for % days valid post-sequential_positions filter
+            max_potential_days = self.subset_size // self.holding_period
+        else:
+            valid_days, num_winners = self._get_valid_days()
+            if self.sample:
+                # sample is mutually exclusive with sequential_positions.
+                # optionally limit the rows to a random sample
+                self._sample_df()
 
-        # if sequential_positions:
-        #     df = filter_sequential_positions(df, hp)
-        #     valid_days, num_winners = get_valid_days(df)
-        #     # used as denominator for % days valid post-sequential_positions filter
-        #     max_potential_days = subset_size // hp
-        # else:
-        #     valid_days, num_winners = get_valid_days(df)
-        #     if self.sample:
-        #         # TODO: add an assert to enforce this
-        #         # sample is mutually exclusive with sequential_positions.
-        #         # optionally limit the rows to a random sample
-        #         self.df = sample_df()
+        # only calculate LRR on sequential_positions
+        p, b, c = self._calc_pbc()
 
-        # # only calculate LRR on sequential_positions
-        # p, b, c = calc_pbc(df)
+        expected_return = p * b - (1 - p) * abs(c)
+        if expected_return <= 0:
+            wager = 0
+        else:
+            wager = self._kelly(p, self._scale_b(b, c))
+        lrr = (1 + wager * expected_return) ** num_winners - 1
+        if self.lrr_only:
+            return lrr, num_winners
+        self.df.reset_index(inplace=True, drop=True)
 
-        # expected_return = p * b - (1 - p) * abs(c)
-        # if expected_return <= 0:
-        #     wager = 0
-        # else:
-        #     wager = kelly(p, scale_b(b, c))
-        # #         if not is_hedged:
-        # #             wager = kelly(p, scale_b(b, c))
-        # #         else:
-        # #             wager = kelly(p, b)
-        # lrr = (1 + wager * expected_return) ** num_winners - 1
-        # if self.lrr_only:
-        #     return lrr, num_winners
-        # df.reset_index(inplace=True, drop=True)
-
-        # print(df[["date", "spo", "short_put_k", "iv_open"]])
-        # print(list(df))
+        print(self.df[["date", "iv_open", "pom_return"]])
+        print(list(self.df))
 
         # if not self.return_only:
         #     #         print_df(df, is_credit)
@@ -355,7 +337,7 @@ class Position:
                 np.round(a[:, self.__SPOT_OPEN_IDX] * coef / msg) * msg
             )
 
-    def _backtest(self) -> np.ndarray:
+    def _backtest(self) -> None:
         """
         * Calculate the Black-Scholes-Merton model price for
           each leg at each point in the holding period.
@@ -375,12 +357,12 @@ class Position:
         # run these methods once here to calculate the strikes and max risk
         # `_shift_ohlc()` is idempotent, so safe to do this twice on slice 0.
         self._shift_ohlc(tensor[:, :, 0], 0)
-        print("just shifted")
+        print("just shifted")  # rbf
         self._calc_strikes(tensor[:, :, 0])
-        print("just calculated_strikes")
+        print("just calculated_strikes")  # rbf
         print(tensor[0, self.__STRIKE_OFFSET, 0])
         self._calc_fudge_factor(tensor[:, :, 0])
-        print("just calculated fudge factor")
+        print("just calculated fudge factor")  # rbf
 
         for i in range(self.holding_period):
             # * this loop is where the magic happens:
@@ -431,7 +413,7 @@ class Position:
         )  # (bool), used by later functions. TODO: can this be removed or calculated later?
 
         # spot price at the time the position was opened ... ?
-        return tensor  # return a so it can be optionally plotted and df for further analysis
+        self.tensor = tensor
 
     def _shift_ohlc(self, a: np.ndarray, shift: int) -> None:
         """
@@ -595,15 +577,18 @@ class Position:
         a[:, self.__RISK_RETURN_IDX, i] = nvc / a[:, self.__MAX_RISK_IDX, 0]
         a[:, self.__POM_RETURN_IDX, i] = nvc / a[:, self.__MAX_RETURN_IDX, 0]
 
-    def kelly(self, p: float, b: float):
+    def _kelly(self, p: float, b: float):
         """the kelly criterion for wagering
         p: probability of win
         b: net payout for a win"""
         return p + (p - 1) / b
 
-    def scale_b(self, b: float, c: float):
+    def _scale_b(self, b: float, c: float):
         """the kelly criterion expects max loss of 1.0
         so scale the winners and losers accordingly."""
+        if c >= -1.0:
+            # no need to scale
+            return b
         return b / abs(c)
 
     def _scalp_stoploss(self, a):
@@ -673,11 +658,11 @@ class Position:
                 a[row, self.__RISK_RETURN_IDX, tp:] = self.risk_return_threshold
         return a
 
-    def plot(self, a, show=100, all=False, pom=True, risk=True):
+    def plot(self, show=100, all=False, pom=True, risk=True):
         """this plots all positions, not just sequential positions."""
-        print("plotting...")
+        # TODO: use attributes instead of passing params around...
         # negate the shifted rows (TODO: pass in hp as a parameter)
-        a = a[: -self.holding_period, :, :]
+        a = self.tensor[: -self.holding_period, :, :]
         if risk:
             # first, plot the percent of max return
             rows = a.shape[0]
@@ -721,305 +706,220 @@ class Position:
             plt.title("POM return")
             plt.show()
 
-
-""" <><><><><><><><><><><><><><><><><><><><> end class <><><><><><><><><><><><><><><><><><><><>"""
-"""
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-"""
-
-
-def analyze_results(df):
-    y = df["risk_return"]  # the y axis is returns
-    subjects = df[
-        [
-            "iv_open",
-            "rolling_vol",
-            "previous_vol",
-            "close_open",
-            "1_day_return",
-            "20_day_avg_daily_return",
-            "5_day_return",
-            "10_day_return",
-            "20_day_return",
-            "50_day_return",
-            "100_day_return",
-            "day",
+    def _clean_rows(self):
+        if self.holding_period > 0:
+            # ignore the first and last few rows that will be NaN due to shift()s above
+            # +1 to include the last valid entry (equivalent to [start_date:-(hp-1)])
+            self.df = self.df[self.lookback : -self.holding_period + 1]
+        else:
+            # just ignore the first rows
+            self.df = self.df[self.start_date :]
+
+    def todo_analyze_results(self, df):
+        y = df["risk_return"]  # the y axis is returns
+        subjects = df[
+            [
+                "iv_open",
+                "rolling_vol",
+                "previous_vol",
+                "close_open",
+                "1_day_return",
+                "20_day_avg_daily_return",
+                "5_day_return",
+                "10_day_return",
+                "20_day_return",
+                "50_day_return",
+                "100_day_return",
+                "day",
+            ]
         ]
-    ]
-    for subject in subjects:
-        # * calculate some regressions and plot
-        #   scatterplots with regression imbedded
-        x = df[subject]
-        try:
-            m, b = np.polyfit(x, y, 1)
-        except np.linalg.LinAlgError:
-            continue
-        yp = np.polyval([m, b], x)
-        plt.plot(x, yp)
-        plt.scatter(x, y)
-        plt.title(f"risk_return vs {subject}")
+        for subject in subjects:
+            # * calculate some regressions and plot
+            #   scatterplots with regression imbedded
+            x = df[subject]
+            try:
+                m, b = np.polyfit(x, y, 1)
+            except np.linalg.LinAlgError:
+                continue
+            yp = np.polyval([m, b], x)
+            plt.plot(x, yp)
+            plt.scatter(x, y)
+            plt.title(f"risk_return vs {subject}")
+            plt.show()
+
+    def _calc_pbc(self):
+        # p: probability of a win
+        # b: payout for a win
+        # c: capital loss in the event of a loss (essentially `b` for losses)
+        if self.df[self.df["risk_return"] >= 0].count()[0] == 0:
+            p, b = 0, 0
+        else:
+            # df is filtered for valid days, so use its entirety
+            p = self.df[self.df["risk_return"] >= 0].count()[0] / len(self.df)
+            b = self.df[self.df["risk_return"] >= 0]["risk_return"].mean()
+        if self.df[self.df["risk_return"] < 0].count()[0] == 0:
+            # No losers found, return 0 since mean of empty sequence will return nan
+            return p, b, 0
+        # mean payout for losers
+        c = self.df[self.df["risk_return"] < 0]["risk_return"].mean()
+        # median payout for losers
+        d = self.df[self.df["risk_return"] < 0]["risk_return"].median()
+        return p, b, min(c, d)
+
+    def _filter_iv(self):
+        """filter position entry on IV range"""
+        if self.iv_greater_than:
+            self.df = self.df[self.df["iv_open"] >= self.iv_min_threshold]
+        if self.iv_less_than:
+            self.df = self.df[self.df["iv_open"] <= self.iv_max_threshold]
+
+    def _filter_vol(self):
+        """filter position entry on realized vol range"""
+        if self.vol_greater_than:
+            self.df = self.df[self.df["rolling_vol"] > self.vol_threshold]
+        else:
+            self.df = self.df[self.df["rolling_vol"] < self.vol_threshold]
+
+    def _filter_sequential_positions(self):
+        # * limit 1 open position at a time, simulating real trading
+        #   where trades are sequential and non-concurrent
+        self.df["valid"] = False
+        self.df["idx"] = self.df.index
+        next_valid = -1  # initial value so the below condition runs the first time
+        for index in self.df.copy()["idx"]:
+            if index > next_valid:
+                self.df.at[index, "valid"] = True
+                next_valid = index + self.holding_period
+        self.df = self.df[self.df["valid"] == True]
+
+    def _get_valid_days(self):
+        # must happen after all filtering but before sequential or sample.
+        valid_days = len(self.df)
+        # TODO: this is just a thought, not final...
+        winners = self.df[self.df["risk_return"] > 0].count()[0]
+        # win = winners / valid_days
+        return valid_days, winners
+
+    def _sample_df(self):
+        """
+        random sample of the dataframe output.
+        NOTE: this is mutually exclusive with sequential positions.
+        this uses the variable `self.sample`, and depending on if it's
+        a float or an int, we'll filter a fraction (float) or number, n (int).
+        """
+        if not self.sample:
+            return
+        if self.sample < 1:
+            # sample a random percent of the dataframe
+            self.df = self.df.sample(frac=self.sample)
+        else:
+            # sample >= 1, so sample a given random number of rows
+            self.df = self.df.sample(n=self.sample)
+
+    def find_max_losers(df, silently=True, return_tally=False):
+        # NOT vectorized.
+        maximum = 0
+        counter = 0
+        for i, winner in enumerate(df["winner"]):
+            if winner == False:
+                counter += 1
+            else:
+                if counter == maximum and counter > 0:
+                    # find all local maxima
+                    if not silently:
+                        print(f"{df['date'].iloc[i-1]} ({counter})")
+                counter = 0
+            if counter > maximum:
+                maximum = counter
+        if not silently:
+            print(f"max consecutive losing days: {maximum}")
+        if return_tally:
+            return maximum
+
+    def get_consecutive_failures(
+        max_consecutive_days, duration, sequential_positions=False
+    ):
+        if sequential_positions:
+            if max_consecutive_days == 0:
+                message = "[PASSED]"
+            else:
+                message = (
+                    f"!!!WARNING!!! {max_consecutive_days} consecutive losing trades!!!"
+                )
+            return message
+        else:
+            if max_consecutive_days >= duration:
+                if duration > 0:
+                    losing_trades = math.ceil(max_consecutive_days / duration)
+                else:
+                    losing_trades = max_consecutive_days
+                message = f"!!!WARNING!!! {losing_trades} consecutive losing trades!!! ({max_consecutive_days} days)"
+            else:
+                message = "[PASSED]"
+            return message
+
+    def _get_subset(self):
+        # * lookback and hp are here so that this subset filtering can be performed *before* calculating BSM prices
+        #   for performance reasons. By adding hp to the end and subtracting lookback from the beginning, shifts
+        #   in later functions can be performed and the beginning and end of the subset aren't NaN due to shifting
+        #   out of range of the df. Later trimming will remove rows to get back to the intended subset.
+        # NOTE: `None` works as valid indexes and df[None:None] returns the entire df
+        lookback = timedelta(days=self.lookback)
+        hp = timedelta(days=self.holding_period)
+        if self.start_date is not None:
+            self.start_date = (
+                datetime.strptime(self.start_date, "%Y-%m-%d").date() - lookback
+            )
+            self.start_date = self.df[self.df["date"] >= self.start_date].index[0]
+        if self.end_date is not None:
+            self.end_date = datetime.strptime(self.end_date, "%Y-%m-%d").date() + hp
+            # +1 to include the last entry.
+            self.end_date = self.df[self.df["date"] <= self.end_date].index[-1] + 1
+        self.df = self.df[self.start_date : self.end_date].copy()
+
+    def plot_histograms(df):
+        # grab the mean and median for PoM and RR for plotting inside the histograms:
+        risk_mean = df["risk_return"].mean()
+        pom_mean = df["pom_return"].mean()
+        risk_median = df["risk_return"].median()
+        pom_median = df["pom_return"].median()
+
+        # plot the risk return
+        plt.hist(df["risk_return"], bins=50, histtype="stepfilled")
+        plt.axvline(risk_mean, color="k", linestyle="dashed", linewidth=1)
+        plt.axvline(risk_median, color="r", linestyle="solid", linewidth=1)
+        plt.title("RR histogram")
         plt.show()
 
+        # plot the PoM return
+        plt.hist(df["pom_return"], bins=50, histtype="stepfilled")
+        plt.axvline(pom_mean, color="k", linestyle="dashed", linewidth=1)
+        plt.axvline(pom_median, color="r", linestyle="solid", linewidth=1)
+        plt.title("PoM histogram")
+        plt.show()
 
-def calc_pbc(df):
-    # p: probability of a win
-    # b: payout for a win
-    # c: capital loss in the event of a loss (essentially `b` for losses)
-    if df[df["risk_return"] >= 0].count()[0] == 0:
-        p, b = 0, 0
-    else:
-        # df is filtered for valid days, so use its entirety
-        p = df[df["risk_return"] >= 0].count()[0] / len(df)
-        b = df[df["risk_return"] >= 0]["risk_return"].mean()
-    if df[df["risk_return"] < 0].count()[0] == 0:
-        # No losers found, return 0 since mean of empty sequence will return nan
-        return p, b, 0
-    # mean payout for losers
-    c = df[df["risk_return"] < 0]["risk_return"].mean()
-    # median payout for losers
-    d = df[df["risk_return"] < 0]["risk_return"].median()
-    return p, b, min(c, d)
-
-
-def clean_rows(df, lookback, hp):
-    if hp > 0:
-        # ignore the first and last few rows that will be NaN due to shift()s above
-        # +1 to include the last valid entry (equivalent to [start_date:-(hp-1)])
-        df = df[lookback : -hp + 1]
-    else:
-        # just ignore the first rows
-        df = df[start_date:]
-    return df
-
-
-def filter_iv(df, iv_greater_than, iv_min_threshold, iv_less_than, iv_max_threshold):
-    if iv_greater_than:
-        df = df[df["iv_open"] >= iv_min_threshold]
-    if iv_less_than:
-        df = df[df["iv_open"] <= iv_max_threshold]
-    return df
-
-
-def filter_vol(df, vol_greater_than, vol_threshold):
-    if vol_greater_than:
-        df = df[df["rolling_vol"] > vol_threshold]
-    else:
-        df = df[df["rolling_vol"] < vol_threshold]
-    return df
-
-
-def filter_sequential_positions(df, hp):
-    # * limit 1 open position at a time, simulating real trading
-    #   where trades are sequential and non-concurrent
-    df["valid"] = False
-    df["idx"] = df.index
-    next_valid = -1  # initial value so the below condition runs the first time
-    for index in df.copy()["idx"]:
-        if index > next_valid:
-            df.at[index, "valid"] = True
-            next_valid = index + hp
-    return df[df["valid"] == True]
-
-
-def get_valid_days(df):
-    # must happen after all filtering but before sequential or sample.
-    valid_days = len(df)
-    # TODO: this is just a thought, not final...
-    winners = df[df["risk_return"] > 0].count()[0]
-    #     win = winners / valid_days
-    return valid_days, winners
-
-
-def find_max_losers(df, silently=True, return_tally=False):
-    # NOT vectorized.
-    maximum = 0
-    counter = 0
-    for i, winner in enumerate(df["winner"]):
-        if winner == False:
-            counter += 1
-        else:
-            if counter == maximum and counter > 0:
-                # find all local maxima
-                if not silently:
-                    print(f"{df['date'].iloc[i-1]} ({counter})")
-            counter = 0
-        if counter > maximum:
-            maximum = counter
-    if not silently:
-        print(f"max consecutive losing days: {maximum}")
-    if return_tally:
-        return maximum
-
-
-def get_consecutive_failures(
-    max_consecutive_days, duration, sequential_positions=False
-):
-    if sequential_positions:
-        if max_consecutive_days == 0:
-            message = "[PASSED]"
-        else:
-            message = (
-                f"!!!WARNING!!! {max_consecutive_days} consecutive losing trades!!!"
-            )
-        return message
-    else:
-        if max_consecutive_days >= duration:
-            if duration > 0:
-                losing_trades = math.ceil(max_consecutive_days / duration)
-            else:
-                losing_trades = max_consecutive_days
-            message = f"!!!WARNING!!! {losing_trades} consecutive losing trades!!! ({max_consecutive_days} days)"
-        else:
-            message = "[PASSED]"
-        return message
-
-
-def get_subset():
-    # * lookback and hp are here so that this subset filtering can be performed *before* calculating BSM prices
-    #   for performance reasons. By adding hp to the end and subtracting lookback from the beginning, shifts
-    #   in later functions can be performed and the beginning and end of the subset aren't NaN due to shifting
-    #   out of range of the df. Later trimming will remove rows to get back to the intended subset.
-    # NOTE: `None` works as valid indexes and df[None:None] returns the entire df
-    lookback = timedelta(days=lookback)
-    hp = timedelta(days=hp)
-    if start_date is not None:
-        start_date = datetime.strptime(start_date, "%Y-%m-%d").date() - lookback
-        start_date = df[df["date"] >= start_date].index[0]
-    if end_date is not None:
-        end_date = datetime.strptime(end_date, "%Y-%m-%d").date() + hp
-        # +1 to include the last entry.
-        end_date = df[df["date"] <= end_date].index[-1] + 1
-    return df[start_date:end_date].copy()
-
-
-def plot_histograms(df):
-    # grab the mean and median for PoM and RR for plotting inside the histograms:
-    risk_mean = df["risk_return"].mean()
-    pom_mean = df["pom_return"].mean()
-    risk_median = df["risk_return"].median()
-    pom_median = df["pom_return"].median()
-
-    # plot the risk return
-    plt.hist(df["risk_return"], bins=50, histtype="stepfilled")
-    plt.axvline(risk_mean, color="k", linestyle="dashed", linewidth=1)
-    plt.axvline(risk_median, color="r", linestyle="solid", linewidth=1)
-    plt.title("RR histogram")
-    plt.show()
-
-    # plot the PoM return
-    plt.hist(df["pom_return"], bins=50, histtype="stepfilled")
-    plt.axvline(pom_mean, color="k", linestyle="dashed", linewidth=1)
-    plt.axvline(pom_median, color="r", linestyle="solid", linewidth=1)
-    plt.title("PoM histogram")
-    plt.show()
-
-
-def get_true_lrr(df, wager, b, sequential_positions=False, silently=True):
-    if not sequential_positions:
-        # the true lrr can't be calculated if simultaneous trades are counted.
-        return float("nan"), float("nan")
-    # calculate the true long run return using kelly criterion SEQUENTIALLY.
-    df["winner"] = (df["risk_return"] >= 0) * 1  # quantify winners
-    df["srr"] = (df["winner"] * wager * b) + (
-        (1 + df["winner"] == 1) * -wager
-    )  # short-run return
-    true_lrr = 1.0
-    for i, trade_return in enumerate(df["srr"]):
-        true_lrr *= 1 + trade_return
+    def get_true_lrr(df, wager, b, sequential_positions=False, silently=True):
+        if not sequential_positions:
+            # the true lrr can't be calculated if simultaneous trades are counted.
+            return float("nan"), float("nan")
+        # calculate the true long run return using kelly criterion SEQUENTIALLY.
+        df["winner"] = (df["risk_return"] >= 0) * 1  # quantify winners
+        df["srr"] = (df["winner"] * wager * b) + (
+            (1 + df["winner"] == 1) * -wager
+        )  # short-run return
+        true_lrr = 1.0
+        for i, trade_return in enumerate(df["srr"]):
+            true_lrr *= 1 + trade_return
+            if not silently:
+                print(f"trade {i+1}: long run return after trade: {true_lrr:.2f}")
+        bsm_lrr = 1.0
+        for i, trade_return in enumerate(df["risk_return"]):
+            bsm_lrr *= 1 + (wager * trade_return)
+            if not silently:
+                print(f"trade {i+1}: long run return after trade: {bsm_lrr:.2f}")
+        true_lrr -= 1
+        bsm_lrr -= 1
         if not silently:
-            print(f"trade {i+1}: long run return after trade: {true_lrr:.2f}")
-    bsm_lrr = 1.0
-    for i, trade_return in enumerate(df["risk_return"]):
-        bsm_lrr *= 1 + (wager * trade_return)
-        if not silently:
-            print(f"trade {i+1}: long run return after trade: {bsm_lrr:.2f}")
-    true_lrr -= 1
-    bsm_lrr -= 1
-    if not silently:
-        print(f"final long run return: {true_lrr:,.2f}%")
-        print(f"final long run bsm return: {bsm_lrr:,.2f}%")
-    return true_lrr, bsm_lrr
+            print(f"final long run return: {true_lrr:,.2f}%")
+            print(f"final long run bsm return: {bsm_lrr:,.2f}%")
+        return true_lrr, bsm_lrr
