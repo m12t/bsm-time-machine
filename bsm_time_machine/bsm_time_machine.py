@@ -1,15 +1,12 @@
 import math
-import time
 import random
 from datetime import datetime, date, timedelta
-from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from scipy.stats import norm
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import pandas_market_calendars as pmc
 
 pd.set_option("display.max_rows", 50, "display.max_columns", 10)
 
@@ -22,13 +19,53 @@ class Option:
         # * rs is the relative strike in one of the two formats below:
         #   '0.5 SD' or '1.05 x' (multiple of strike)
 
-        self.id = f"{rs.replace(' ', '')}_{tenor}_{right}"
-        self.relative_strike_coef = 0.0
-        self.relative_strike_type = 0.0
+        self.id = None  # placeholder
         self.relative_strike = rs
         self.tenor = tenor
         self.right = right
         self.quantity = quantity
+
+        self._post_init()
+
+        self._generate_id()
+
+    def _generate_id(self):
+        self.id = f"{self.relative_strike.replace(' ', '')}_{self.tenor}_{self.right}"
+
+    def _post_init(self):
+        """run some basic validation on the inputs"""
+        # validate the relative strike
+        if not isinstance(self.relative_strike, str):
+            raise TypeError(
+                "relative strike must be type <str> in format `1.0 SD` or `1.0 X`"
+            )
+        rsval, rstype = self.relative_strike.split(" ")
+        rsval = float(rsval)
+        if rstype.casefold() not in {"x", "sd"}:
+            raise ValueError(
+                "relative strike must use constant multiplier, `X`, or volatility multiplier, `SD`"
+            )
+        if rstype.casefold() == "x" and rsval <= 0.0:
+            raise ValueError("relative price must be nonzero")
+
+        # validate the tenor
+        if not isinstance(self.tenor, int) and not isinstance(self.tenor, float):
+            raise TypeError("tenor must be numeric")
+
+        if self.tenor <= 0:
+            raise ValueError("tenor must be positive")
+
+        # validate the quantity
+        if not isinstance(self.quantity, int):
+            raise TypeError("quantity must be an integer")
+
+        if self.quantity == 0:
+            raise ValueError("quantity must be nonzero")
+
+        # assert the right
+        if self.right not in {"call", "put"}:
+            # in theory this never happens. But it's a low-overhead test, so do it anyways.
+            raise ValueError("unexpected right encountered")
 
 
 class Call(Option):
@@ -208,10 +245,9 @@ class Position:
         """
         run a simulation with the given params
         """
-        # copy of df, narrowed down for a specific time period
-        self._trim_df()
+        self._get_subset()  # copy of df, narrowed down for a specific time period
 
-        self._backtest()  # BSM over hp
+        self._backtest()  # BSM over holding period
 
         # all shift(s) must be before filtering so they don't skip days that are filtered out and get messed up
         if self.vol_type == "max":
@@ -255,27 +291,6 @@ class Position:
 
         self.df.reset_index(inplace=True, drop=True)
 
-    def _trim_df(self):
-        """
-        * lookback and hp are here so that this subset filtering can be performed *before* calculating BSM prices
-          for performance reasons. By adding hp to the end and subtracting lookback from the beginning, shifts
-          in later functions can be performed and the beginning and end of the subset aren't NaN due to shifting
-          out of range of the df. Later trimming will remove rows to get back to the intended subset.
-        NOTE: `None` works as valid indexes and df[None:None] returns the entire df
-        """
-        lookback = timedelta(days=self.lookback)
-        holding_period = timedelta(days=self.holding_period)
-        start, end = None, None
-        if self.start_date is not None:
-            start = datetime.strptime(self.start_date, "%Y-%m-%d").date() - lookback
-            start = self.df[self.df["date"] >= self.start_date].index[0]
-        if self.end_date is not None:
-            end = datetime.strptime(self.end_date, "%Y-%m-%d").date() + holding_period
-            end = (
-                self.df[self.df["date"] <= self.end_date].index[-1] + 1
-            )  # +1 to include the last entry.
-        self.df = self.df[start:end].copy()
-
     def _parse_relative_strike(
         self,
         a: np.ndarray,
@@ -287,7 +302,8 @@ class Position:
         rsval = float(rsval)
         if rstype.casefold() == "x":
             temp[:, coef_idx] = rsval
-        elif rstype.casefold() == "sd":
+        else:
+            # it's vol-based (Std Dev)
             temp[:, stddev_idx] = (
                 rsval
                 * a[:, self.__SIGMA_OPEN_IDX]
@@ -297,8 +313,6 @@ class Position:
                 temp[:, coef_idx] = 1 + temp[:, stddev_idx]
             else:
                 temp[:, coef_idx] = 1 - temp[:, stddev_idx]
-        else:
-            raise ValueError("Unexpected relative strike type encountered")
         return temp[:, coef_idx]
 
     def _calc_strikes(self, a: np.ndarray) -> None:
@@ -518,13 +532,18 @@ class Position:
         )
         for _ in range(self.num_simulations):
             val[:] = 0  # zero out val array
-            t = random.random() * self.holding_period / 252 + 0.000001
-            sigma = np.random.choice(self.__SIGMA_OPEN_IDX)
+            t = random.random() * self.holding_period
+            sigma = np.random.choice(a[:, self.__SIGMA_OPEN_IDX])
             spot = np.random.uniform(
                 a[:, self.__MAX_DOWNSWING_IDX], a[:, self.__MAX_UPSWING_IDX]
             )
             for i, leg in enumerate(self.legs):
-                k = a[:, self.__STRIKE_OFFSET + i * self.__STEP_SIZE]
+                step = i * self.__STEP_SIZE
+                k = a[:, self.__STRIKE_OFFSET + step]
+                # * subtract no more than `holding_period` from the tenor.
+                # * this allows the position to maintain the offsets between
+                #   tenors.
+                t = (a[:, self.__TENOR_OPEN_OFFSET + step] - t) / 252
                 if leg.right == "call":
                     val += leg.quantity * self._calc_call(spot, k, sigma, t)
                 else:
@@ -542,9 +561,15 @@ class Position:
             a[:, self.__MAX_RETURN_IDX] = np.maximum(a[:, self.__MAX_RETURN_IDX], val)
 
             if plot:
-                # * just grab the first position since the payoff diagram should be
-                #   be the same for all positions
-                plt.scatter(spot[-1], val[-1], s=1)
+                # * grab the last position since the payoff diagram
+                #   should be be the same for all positions.
+                # * divide the randomly generated spot by the spot open at index `-1`
+                #   and divide the payoff by the net position open to give relative payoff
+                plt.scatter(
+                    spot[-1] / a[-1, self.__SPOT_OPEN_IDX],
+                    val[-1] / -a[-1, self.__MAX_RISK_IDX],
+                    s=1,
+                )
 
     def _calc_returns(self, a: np.ndarray, i: int) -> None:
         """calculate the overall position return at the given period, i."""
@@ -685,8 +710,10 @@ class Position:
 
     def plot_payoff(self):
         self._calc_position_risk(self.tensor[:, :, 0], plot=True)
-        plt.title("spot vs position value")
-        plt.grid(axis="y")
+        plt.title("Position Payoff Diagram")
+        plt.xlabel("Relative spot price")
+        plt.ylabel("Risk Return")
+        plt.grid(axis="both", alpha=0.34)
         plt.show()
 
     def to_pickle(self, path: str) -> None:
@@ -850,6 +877,46 @@ class Position:
             print(f"max consecutive losing days: {maximum}")
         if return_tally:
             return maximum
+
+    def generate_report(self):
+        mean_move = (
+            self.df["spot_movement"].abs().mean()
+        )  # median is more useful than mean.
+        median_move = (
+            self.df["spot_movement"].abs().median()
+        )  # median is more useful than mean.
+        print("=====================================")
+        print(
+            f"\n{100*self.num_valid_days/(len(self.df) - self.holding_period - self.lookback):.1f}% of days meet criteria ({self.num_valid_days})"
+        )
+        print(
+            f"holding period = {self.holding_period} trading (~{round(7/5*self.holding_period)} calendar) days"
+        )
+        print("-------------------------------------")
+        print(f"median spot movement:\t{100 * median_move:.2f}%")
+        print(f"mean spot movement:\t{100 * mean_move:.2f}%")
+        print("-------------------------------------")
+        print(f"probability of a win:\t{100 * self.pbc[0]:.2f}%")
+        print(f"payout for winners:\t{100 * self.pbc[1]:.2f}%")
+        print(f"loss for losers:\t{100 * self.pbc[2]:.2f}%")
+        print(f"expected_return:\t{100 * self.expected_return:.2f}%")
+        print(f"wager:\t\t\t{100 * self.wager:.2f}%")
+        print(f"wager expected_return:\t{100 * self.wager * self.expected_return:.2f}%")
+        print(f"average expected lrr:\t{100 * self.lrr:,.0f}%")
+        # print('-------------------------------------')
+        # print(f'true computed lrr:\t{100 * true_lrr:,.0f}%')
+        # print(f'computed bsm lrr:\t{100 * bsm_lrr:,.0f}%')
+        # print(f'$100,000 at true lrr:\t${100000 * (1 + true_lrr):,.0f}')
+        print("-------------------------------------")
+        print(f"mean iv open:\t\t{100 * self.df['iv_open'].mean():.2f}")
+        print(f"median iv open\t\t{100 * self.df['iv_open'].median():.2f}")
+        print("-------------------------------------")
+        print(f"cumulative risk return:\t{100 * self.df['risk_return'].sum():.2f}%")
+        print(f"highest risk return:\t{100 * self.df['risk_return'].max():.2f}%")
+        # !NOTE: mean risk == expected_return!
+        print(f"mean risk return:\t{100 * self.df['risk_return'].mean():.2f}%")
+        print(f"median risk return:\t{100 * self.df['risk_return'].median():.2f}%")
+        print("=====================================")
 
     def get_consecutive_failures(
         max_consecutive_days, duration, sequential_positions=False

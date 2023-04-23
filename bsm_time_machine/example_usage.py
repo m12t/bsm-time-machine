@@ -3,11 +3,13 @@
   a simple PMCC (Poor Man's Covered Call)
   using bsm_time_machine.
 """
+import warnings
 
 import pandas as pd
 
 from bsm_time_machine import Underlying, Position, Call, Put
 
+warnings.filterwarnings("ignore")  # ignore numpy divide by zero
 
 df = pd.read_pickle("../dfs/1day_spx_max_iv_rth.pkl")
 
@@ -33,42 +35,46 @@ u = Underlying(
 #   supported, volatility-based.
 # * Here, we're selling a call that is 0.2 standard deviations
 #   out-of-the-money.
-short_call = Call("0.3 x", 500, 1)
-long_call = Call("1.2 x", 45, -1)
+short_call = Call("1.05 SD", 45, -1)
+short_put = Put("1.05 SD", 45, -1)
 
+# TODO: this position, by definition, should win 95% of the time... not 3%. Need to debug the risk, payoff, and returns
 
 p = Position(
     df,
     underlying=u,
     legs=[
-        Call("0.2 SD", 5, -1),
-        Put("0.2 SD", 5, -1),
+        Call("2.05 SD", 45, -1),
+        Put("2.05 SD", 45, -1),
     ],  # simply wrap each leg in a list
-    holding_period=5,
+    holding_period=45,
     stop_loss=-0.56,
     max_deviations=3,
+    start_date="2017-01-01",
     scalping=True,
     sequential_positions=True,
-    pom_threshold=0.63,
+    pom_threshold=0.7,
     num_simulations=500,
-    lrr_only=False,
-    vol_threshold=2.0,
-    lookback=3,
-    vol_greater_than=True,
-    iv_min_threshold=0.0,
-    iv_max_threshold=0.15,
-    iv_greater_than=False,
-    iv_less_than=True,
+    # lrr_only=False,
+    # vol_threshold=2.0,
+    # lookback=3,
+    # vol_greater_than=True,
+    # iv_min_threshold=0.0,
+    # iv_max_threshold=0.45,
+    # iv_greater_than=False,
+    # iv_less_than=True,
 )
 p.run()
 
 # * plot the risk return payoff diagram for the portfolio
 # * this is also used to validate that the risk analysis looks
 #   the way you expect it to.
-p.plot_payoff()
+# p.plot_payoff()
 
-# p.plot(show=256)
 
+p.generate_report()
+
+p.plot(show=256)
 # p.analyze_results()
 
 # p.to_pickle("output.pkl")  # save the output df if you'd like
