@@ -63,3 +63,5 @@ venv/
 .env
 
 bsm_time_machine/tasklist.md
+
+.vscode

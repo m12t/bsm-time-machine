@@ -1,6 +1,7 @@
 import pytest
+import pandas as pd
 
-from bsm_time_machine import Underlying, Position, Call, Put
+from bsm_time_machine import Underlying, Call, Put, Position
 
 
 @pytest.mark.parametrize(
@@ -105,3 +106,64 @@ def test_valid_underlying_creation(symbol, spread_loss, min_strike_gap):
 def test_invalid_underlying_creation(symbol, spread_loss, min_strike_gap, excep):
     with pytest.raises(excep):
         Underlying(symbol, spread_loss, min_strike_gap)
+
+
+@pytest.mark.parametrize(
+    "df,underlying,legs,holding_period,stop_loss,max_deviations,start_date,scalping,sequential_positions,pom_threshold,num_simulations",
+    [
+        # success instantiation
+        (
+            pd.DataFrame(),
+            Underlying("SPX", 0.3210, 1.34280),
+            [
+                Call("2.05 SD", 45, -1),
+                Put("2.05 SD", 45, -1),
+            ],
+            5,
+            -0.56,
+            3,
+            "2017-01-01",
+            True,
+            True,
+            0.7,
+            500,
+        ),
+    ],
+)
+def test_valid_position_creation(
+    df,
+    underlying,
+    legs,
+    holding_period,
+    stop_loss,
+    max_deviations,
+    start_date,
+    scalping,
+    sequential_positions,
+    pom_threshold,
+    num_simulations,
+):
+    p = Position(
+        df,
+        underlying=underlying,
+        legs=legs,
+        holding_period=holding_period,
+        stop_loss=stop_loss,
+        max_deviations=max_deviations,
+        start_date=start_date,
+        scalping=scalping,
+        sequential_positions=sequential_positions,
+        pom_threshold=pom_threshold,
+        num_simulations=num_simulations,
+    )
+    assert p.df.equals(df)
+    assert p.underlying == underlying
+    assert p.legs == legs
+    assert p.holding_period == holding_period
+    assert p.stop_loss == stop_loss
+    assert p.max_deviations == max_deviations
+    assert p.start_date == start_date
+    assert p.scalping == scalping
+    assert p.sequential_positions == sequential_positions
+    assert p.pom_threshold == pom_threshold
+    assert p.num_simulations == num_simulations

@@ -170,7 +170,7 @@ class Position:
         sample=False,
         return_only=True,
         lrr_only=True,
-        num_simulations=15000,
+        num_simulations=10_000,
     ):
         self.df = df
         self.underlying = underlying
