@@ -44,6 +44,6 @@ def yield_expected(expected_path: str):
         ([4, 3, 2, 1, 0], "100_trading_days.pkl", "100_trading_days.pkl"),
     ],
 )
-def test_filter_days(position, yield_expected, expected_path):
+def test_filter_days(position, yield_expected):
     position._filter_days()
     pd.testing.assert_frame_equal(position.df, yield_expected)
