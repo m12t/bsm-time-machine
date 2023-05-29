@@ -1,7 +1,10 @@
 """
 a util file for generating test dataframe pickles.
 
-example invocation: python utils/df_saver.py --dir filter_days --name 100_trading_days --is_case True
+example invocation: 
+for case: $ python utils/df_saver.py --dir filter_days --name 100_trading_days --is_case True
+for expected: $ python utils/df_saver.py --dir filter_days --name 100_trading_days
+
 """
 import argparse
 import os
@@ -14,6 +17,7 @@ def main(name: str, dir: str, is_case: bool):
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(f"../data/{dir}")
     prefix = "cases/" if is_case else "expected/"
+    print("prefix:", prefix, "is_case", is_case)
     df = generate_df()
     if df is None:
         print("aborted")
@@ -37,6 +41,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--name", type=str)
     parser.add_argument("--dir", type=str, required=True)
-    parser.add_argument("--is_case", type=bool, required=True)
+    parser.add_argument("--is_case", type=bool, default=False)
     args = parser.parse_args()
     main(args.name, args.dir, args.is_case)

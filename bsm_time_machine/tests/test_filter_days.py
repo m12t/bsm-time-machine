@@ -1,4 +1,5 @@
 import os
+from typing import Tuple
 
 import pytest
 import pandas as pd
@@ -6,51 +7,32 @@ import numpy as np
 
 from bsm_time_machine import Position, Underlying, Call, Put
 
-# NOTE: run pytest with `-s` to show print statements...
 
 BASE_PATH = os.path.join("tests/data/filter_days/")
 
 
-# mkdir foo && cd foo && mkdir cases && mkdir expected
+@pytest.fixture
+def position(case_path: str, trading_days: Tuple[int]):
+    yield Position(
+        pd.read_pickle(BASE_PATH + "cases/" + case_path),
+        Underlying("SPX", 0.05, 5),
+        [Call("2.05 SD", 45, 1), Put("2.05 SD", 45, -1)],
+        5,
+        days_of_the_week=trading_days,
+    )
 
 
-# def load_dfs(case, expected):
-#     return (
-#         pd.read_pickle(BASE_PATH + "cases/" + case),
-#         pd.read_pickle(BASE_PATH + "expected/" + expected),
-#     )
-#     return pd.DataFrame(np.resize(np.arange(5), 100), columns=["day"]).to_pickle(
-#         BASE_PATH + "cases/" + name
-#     )
+@pytest.fixture
+def yield_expected(expected_path: str):
+    yield pd.read_pickle(BASE_PATH + "expected/" + expected_path)
 
 
-# def underlying():
-#     return Underlying("SPX", 0.05, 5)
-
-
-# def legs():
-#     return [Call("2.05 SD", 45, 1), Put("2.05 SD", 45, -1)]
-
-
-# @pytest.fixture
-# def instance():
-#     return Position(
-#         # df(),
-#         underlying(),
-#         legs(),
-#     )
-
-
-# pytest.mark.parametrize(
-#     "trading_days,case,expected",
-#     [
-#         (0, 1, 2, 3, 4),
-#     ],
-# )
-
-
-def test_filter_days():
-    assert 5 == 5
-
-    # instance._filter_days()
-    # print(instance.df)
+@pytest.mark.parametrize(
+    "trading_days,case_path,expected_path",
+    [
+        ((0, 1, 2, 3, 4), "100_trading_days.pkl", "100_trading_days.pkl"),
+    ],
+)
+def test_filter_days(trading_days, position, yield_expected):
+    position._filter_days()
+    pd.testing.assert_frame_equal(position.df, yield_expected)
