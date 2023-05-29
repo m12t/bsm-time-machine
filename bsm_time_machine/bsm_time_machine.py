@@ -155,7 +155,7 @@ class Position:
         risk_return_threshold: Optional[float] = None,
         sequential_positions: bool = True,
         riskfree_rate: float = 0.04,
-        days_of_the_week: set = (0, 1, 2, 3, 4),
+        days_of_the_week: List = [0, 1, 2, 3, 4],
         start_date: date = None,
         end_date: date = None,
         vol_threshold: float = 0.0,

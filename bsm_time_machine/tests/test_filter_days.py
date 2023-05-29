@@ -1,9 +1,9 @@
 import os
 from typing import Tuple
+import time
 
 import pytest
 import pandas as pd
-import numpy as np
 
 from bsm_time_machine import Position, Underlying, Call, Put
 
@@ -24,15 +24,26 @@ def position(case_path: str, trading_days: Tuple[int]):
 
 @pytest.fixture
 def yield_expected(expected_path: str):
-    yield pd.read_pickle(BASE_PATH + "expected/" + expected_path)
+    try:
+        yield pd.read_pickle(BASE_PATH + "expected/" + expected_path)
+    except FileNotFoundError:
+        # * this try block is so that when writing new expected dfs,
+        #   the `expected_path` can be used in `to_pickle` and won't
+        #   error out at this stage. Not necessary for testing.
+        yield None
 
 
 @pytest.mark.parametrize(
     "trading_days,case_path,expected_path",
     [
-        ((0, 1, 2, 3, 4), "100_trading_days.pkl", "100_trading_days.pkl"),
+        ([0, 1, 2, 3, 4], "100_trading_days.pkl", "100_trading_days.pkl"),
+        ([0], "100_trading_days.pkl", "mondays_only.pkl"),
+        ([4], "100_trading_days.pkl", "fridays_only.pkl"),
+        ([5, 6, 7], "100_trading_days.pkl", "no_trading_days.pkl"),
+        ([0, 2, 3], "100_trading_days.pkl", "mo_we_thu.pkl"),
+        ([4, 3, 2, 1, 0], "100_trading_days.pkl", "100_trading_days.pkl"),
     ],
 )
-def test_filter_days(trading_days, position, yield_expected):
+def test_filter_days(position, yield_expected, expected_path):
     position._filter_days()
     pd.testing.assert_frame_equal(position.df, yield_expected)
