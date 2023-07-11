@@ -1,7 +1,7 @@
 """
 a util file for generating test dataframe pickles.
 
-example invocation: 
+example invocation:
 for case: $ python utils/df_saver.py --dir filter_days --name 100_trading_days --is_case True
 for expected: $ python utils/df_saver.py --dir filter_days --name 100_trading_days
 
