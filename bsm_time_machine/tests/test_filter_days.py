@@ -1,6 +1,5 @@
 import os
 from typing import Tuple
-import time
 
 import pytest
 import pandas as pd

@@ -1,13 +1,14 @@
 """
 a util file for generating test dataframe pickles.
 
-example invocation: 
+example invocation:
 for case: $ python utils/df_saver.py --dir filter_days --name 100_trading_days --is_case True
 for expected: $ python utils/df_saver.py --dir filter_days --name 100_trading_days
 
 """
 import argparse
 import os
+from datetime import datetime
 
 import pandas as pd
 import numpy as np
@@ -27,8 +28,10 @@ def main(name: str, dir: str, is_case: bool):
 
 def generate_df() -> pd.DataFrame():
     """modify this code to chage what the df should look like..."""
-    df = pd.DataFrame(np.resize(np.arange(5), 100), columns=["day"])
+    df = pd.DataFrame(pd.date_range("2015-06-29", "2016-08-04"), columns=["date"])
+    df["date"] = df["date"].dt.date
     print(df)
+    print(df.info())
     if input("does the below df look correct? [y/n]:") != "y":
         return
     return df
