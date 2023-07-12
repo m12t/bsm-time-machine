@@ -966,7 +966,7 @@ class Position:
         #   for performance reasons. By adding hp to the end and subtracting lookback from the beginning, shifts
         #   in later functions can be performed and the beginning and end of the subset aren't NaN due to shifting
         #   out of range of the df. Later trimming will remove rows to get back to the intended subset.
-        # NOTE: `None` works as valid indexes and df[None:None] returns the entire df
+        # NOTE: `None` works as a valid index and df[None:None] returns the entire df
         lookback = timedelta(days=self.lookback)
         hp = timedelta(days=self.holding_period)
         if self.start_date is not None:

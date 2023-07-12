@@ -8,6 +8,7 @@ for expected: $ python utils/df_saver.py --dir filter_days --name 100_trading_da
 """
 import argparse
 import os
+from datetime import datetime
 
 import pandas as pd
 import numpy as np
@@ -27,8 +28,10 @@ def main(name: str, dir: str, is_case: bool):
 
 def generate_df() -> pd.DataFrame():
     """modify this code to chage what the df should look like..."""
-    df = pd.DataFrame(np.resize(np.arange(5), 100), columns=["day"])
+    df = pd.DataFrame(pd.date_range("2000-01-01", "2019-12-31"), columns=["date"])
+    df["date"] = df["date"].dt.date
     print(df)
+    print(df.info())
     if input("does the below df look correct? [y/n]:") != "y":
         return
     return df
