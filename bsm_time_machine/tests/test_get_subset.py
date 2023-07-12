@@ -39,10 +39,42 @@ def yield_expected(expected_path: str):
 @pytest.mark.parametrize(
     "holding_period,lookback,start_date,end_date,case_path,expected_path",
     [
-        (0, 0, None, None, "20000101_20230711.pkl", "20000101_20230711.pkl"),
-        (0, 0, None, "2019-12-31", "20000101_20230711.pkl", "20000101_20191231.pkl"),
+        (
+            0,
+            0,
+            None,
+            None,
+            "20000101_20230711.pkl",
+            "20000101_20230711.pkl",
+        ),
+        (
+            0,
+            0,
+            None,
+            "2019-12-31",
+            "20000101_20230711.pkl",
+            "20000101_20191231.pkl",
+        ),
+        (
+            0,
+            0,
+            "2015-07-01",
+            "2016-06-30",
+            "20000101_20230711.pkl",
+            "20150701_20160630.pkl",
+        ),
+        (
+            35,
+            2,
+            "2015-07-01",
+            "2016-06-30",
+            "20000101_20230711.pkl",
+            "20150701_20160630_hp35_lb2.pkl",
+        ),
     ],
 )
 def test_filter_days(position, yield_expected):
     position._get_subset()
-    pd.testing.assert_frame_equal(position.df, yield_expected)
+    pd.testing.assert_frame_equal(
+        position.df.reset_index(drop=True), yield_expected.reset_index(drop=True)
+    )

@@ -28,7 +28,7 @@ def main(name: str, dir: str, is_case: bool):
 
 def generate_df() -> pd.DataFrame():
     """modify this code to chage what the df should look like..."""
-    df = pd.DataFrame(pd.date_range("2000-01-01", "2019-12-31"), columns=["date"])
+    df = pd.DataFrame(pd.date_range("2015-06-29", "2016-08-04"), columns=["date"])
     df["date"] = df["date"].dt.date
     print(df)
     print(df.info())
