@@ -361,6 +361,7 @@ class Position:
         width = self.__STRIKE_OFFSET + self.__STEP_SIZE * len(self.legs)
         depth = self.holding_period
         tensor = np.zeros((height, width, depth))
+        # np.save("./tests/data/shift_ohlc/cases/tensor", tensor)
 
         # run these methods once here to calculate the strikes and max risk
         # `_shift_ohlc()` is idempotent, so safe to do this twice on slice 0.
@@ -428,6 +429,8 @@ class Position:
           that is passed in.
         """
         rth = 0.27  # regular trading hours == 6.5 hours ~= 0.27 days
+        # pd.to_pickle(self.df, f"./tests/data/shift_ohlc/cases/shift{shift}.pkl")
+        # np.save(f"./tests/data/shift_ohlc/cases/tensor{shift}", a)
 
         a[:, self.__SPOT_OPEN_IDX] = self.df["open"].shift(-shift).to_numpy()
         a[:, self.__SPOT_CLOSE_IDX] = self.df["close"].shift(-shift).to_numpy()
@@ -441,6 +444,7 @@ class Position:
             #   position value at each unit (typically days) in the holding period.
             a[:, self.__TENOR_OPEN_OFFSET + step] = leg.tenor - shift
             a[:, self.__TENOR_CLOSE_OFFSET + step] = max(0, leg.tenor - shift - rth)
+        # np.save(f"./tests/data/shift_ohlc/expected/shift{shift}", a)
 
     def _calc_bsm(self, a: np.ndarray, i) -> None:
         """
