@@ -7,7 +7,7 @@ import numpy as np
 from bsm_time_machine import Position, Underlying, Call, Put
 
 
-BASE_PATH = os.path.join("tests/data/shift_ohlc/")
+BASE_PATH = os.path.join("tests/data/calc_strikes/")
 
 
 @pytest.fixture
@@ -45,9 +45,11 @@ def tensor(tensor_path: str):
 
 
 @pytest.mark.parametrize(
-    "shift,tensor_path,case_path,expected_path",
-    [(i, f"tensor{i}.npy", f"shift{i}.pkl", f"shift{i}.npy") for i in range(45)],
+    "tensor_path,case_path,expected_path",
+    [
+        ("tensor1.npy", "test1.pkl", "test1.npy"),
+    ],
 )
-def test_filter_days(shift, position, tensor, yield_expected):
-    position._shift_ohlc(tensor, shift)
+def test_filter_days(position, tensor, yield_expected):
+    position._calc_strikes(tensor)
     np.testing.assert_array_equal(tensor, yield_expected)

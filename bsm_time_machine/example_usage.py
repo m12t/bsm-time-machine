@@ -74,7 +74,7 @@ p.run()
 
 p.generate_report()
 
-p.plot(show=256)
+# p.plot(show=256)
 # p.analyze_results()
 
 # p.to_pickle("output.pkl")  # save the output df if you'd like
