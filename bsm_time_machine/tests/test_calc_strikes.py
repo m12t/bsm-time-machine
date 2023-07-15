@@ -50,6 +50,6 @@ def tensor(tensor_path: str):
         ("tensor1.npy", "test1.pkl", "test1.npy"),
     ],
 )
-def test_filter_days(position, tensor, yield_expected):
+def test_calc_strikes(position, tensor, yield_expected):
     position._calc_strikes(tensor)
     np.testing.assert_array_equal(tensor, yield_expected)

@@ -48,6 +48,6 @@ def tensor(tensor_path: str):
     "shift,tensor_path,case_path,expected_path",
     [(i, f"tensor{i}.npy", f"shift{i}.pkl", f"shift{i}.npy") for i in range(45)],
 )
-def test_filter_days(shift, position, tensor, yield_expected):
+def test_shift_ohlc(shift, position, tensor, yield_expected):
     position._shift_ohlc(tensor, shift)
     np.testing.assert_array_equal(tensor, yield_expected)
