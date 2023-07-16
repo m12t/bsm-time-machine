@@ -10,7 +10,7 @@ from bsm_time_machine import Position, Underlying, Call, Put
 BASE_PATH = os.path.join("tests/data/calc_strikes/")
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def position(case_path: str):
     yield Position(
         pd.read_pickle(BASE_PATH + "cases/" + case_path),
