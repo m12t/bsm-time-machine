@@ -175,7 +175,7 @@ class Position:
         self.df = df
         self.underlying = underlying
         self.legs = legs
-        self.holding_period = min(holding_period, min(l.tenor for l in legs))
+        self.holding_period = min(holding_period, min(leg.tenor for leg in legs))
         self.stop_loss = stop_loss
         self.scalping = scalping
         self.pom_threshold = pom_threshold
@@ -361,7 +361,6 @@ class Position:
         width = self.__STRIKE_OFFSET + self.__STEP_SIZE * len(self.legs)
         depth = self.holding_period
         tensor = np.zeros((height, width, depth))
-        # np.save("./tests/data/shift_ohlc/cases/tensor", tensor)
 
         # run these methods once here to calculate the strikes and max risk
         # `_shift_ohlc()` is idempotent, so safe to do this twice on slice 0.
@@ -489,20 +488,16 @@ class Position:
     ) -> np.ndarray:
         d1 = self._calc_d1(s, k, sigma, t, self.riskfree_rate)
         d2 = self._calc_d2(d1, sigma, t)
-        call = np.maximum(
-            0, s * norm.cdf(d1) - k * np.exp(-self.riskfree_rate * t) * norm.cdf(d2)
-        )
-        return np.nan_to_num(call)
+        kert = k * np.exp(-self.riskfree_rate * t)
+        return np.nan_to_num(np.maximum(0, s * norm.cdf(d1) - kert * norm.cdf(d2)))
 
     def _calc_put(
         self, s: np.ndarray, k: np.ndarray, sigma: np.ndarray, t: np.ndarray
     ) -> np.ndarray:
         d1 = self._calc_d1(s, k, sigma, t, self.riskfree_rate)
         d2 = self._calc_d2(d1, sigma, t)
-        put = np.maximum(
-            0, k * np.exp(-self.riskfree_rate * t) * norm.cdf(-d2) - s * norm.cdf(-d1)
-        )
-        return np.nan_to_num(put)
+        kert = k * np.exp(-self.riskfree_rate * t)
+        return np.nan_to_num(np.maximum(0, kert * norm.cdf(-d2) - s * norm.cdf(-d1)))
 
     def _calc_fudge_factor(self, a: np.ndarray) -> None:
         """
