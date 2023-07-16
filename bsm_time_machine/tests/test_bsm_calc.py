@@ -104,6 +104,21 @@ def test_calc_bsm(shift, position, tensor, yield_expected):
             0.04,
         )
         for i in range(45)
+    ]
+    + [
+        (
+            "put",
+            "case_path_1.pkl",
+            f"put_d1_{i}.npy",
+            f"put_d2_{i}.npy",
+            f"put_spot_{i}.npy",
+            f"put_strike_{i}.npy",
+            f"put_sigma_{i}.npy",
+            f"put_tenor_{i}.npy",
+            f"put_prices_{i}.npy",
+            0.04,
+        )
+        for i in range(45)
     ],
 )
 def test_bsm_calcs(position, right, d1, d2, spot, strike, sigma, tenor, prices, rfr):
