@@ -8,10 +8,8 @@ for expected: $ python utils/df_saver.py --dir filter_days --name 100_trading_da
 """
 import argparse
 import os
-from datetime import datetime
 
 import pandas as pd
-import numpy as np
 
 
 def main(name: str, dir: str, is_case: bool):
