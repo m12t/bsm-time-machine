@@ -378,8 +378,8 @@ class Position:
             self._shift_ohlc(tensor[:, :, i], i)
             self._calc_bsm(tensor, i)
             if i == 0:
-                # * is relies on one run-through of `_calc_bsm()` for the
-                #   opening position values.
+                # * _calc_position_risk() relies on one run-through of `_calc_bsm()`
+                #   for the opening position values.
                 self._calc_position_risk(tensor[:, :, 0])
             self._calc_returns(tensor[:, :, :], i)
 
