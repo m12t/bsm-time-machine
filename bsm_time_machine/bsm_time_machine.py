@@ -163,14 +163,15 @@ class Position:
         vol_greater_than: bool = True,
         vol_type: str = "max",  # max (high-low) or real (open-close)
         max_deviations: float = 2.0,
-        iv_min_threshold=0.10,
-        iv_max_threshold=0.40,
-        iv_greater_than=False,  # iv_lower_limit
-        iv_less_than=False,  # iv_upper_limit
-        sample=False,
-        return_only=True,
-        lrr_only=True,
-        num_simulations=10_000,
+        iv_min_threshold: bool = 0.10,
+        iv_max_threshold: bool = 0.40,
+        iv_greater_than: bool = False,  # iv_lower_limit
+        iv_less_than: bool = False,  # iv_upper_limit
+        sample: bool = False,
+        return_only: bool = True,
+        lrr_only: bool = True,
+        num_simulations: int = 10_000,
+        hold_till_maturity: bool = True,
     ):
         self.df = df
         self.underlying = underlying
@@ -198,6 +199,7 @@ class Position:
         self.lrr_only = lrr_only
         self.max_deviations = max_deviations
         self.num_simulations = num_simulations
+        self.hold_till_maturity = hold_till_maturity
 
         # * The below offsets are for the 3D numpy array that is dyanamic regarding
         #   the number of positions. It does this by storing offsets and step_size.
@@ -548,6 +550,8 @@ class Position:
         for _ in range(self.num_simulations):
             val[:] = 0  # zero out val array
             t = random.random() * self.holding_period
+            if self.hold_till_maturity:
+                t = 1e-3
             sigma = np.random.choice(a[:, self.__SIGMA_OPEN_IDX])
             spot = np.random.uniform(
                 a[:, self.__MAX_DOWNSWING_IDX], a[:, self.__MAX_UPSWING_IDX]

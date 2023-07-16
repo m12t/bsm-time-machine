@@ -35,8 +35,6 @@ u = Underlying(
 #   supported, volatility-based.
 # * Here, we're selling a call that is 0.2 standard deviations
 #   out-of-the-money.
-short_call = Call("1.05 SD", 45, -1)
-short_put = Put("1.05 SD", 45, -1)
 
 # TODO: this position, by definition, should win 95% of the time... not 3%. Need to debug the risk, payoff, and returns
 
@@ -44,8 +42,10 @@ p = Position(
     df,
     underlying=u,
     legs=[
-        Call("2.05 SD", 45, -1),
-        Put("2.05 SD", 45, -1),
+        Call("1.0 SD", 45, -1),
+        Put("1.0 SD", 45, -1),
+        Call("1.2 SD", 45, 1),
+        Put("1.2 SD", 45, 1),
     ],  # simply wrap each leg in a list
     holding_period=45,
     stop_loss=-0.56,
@@ -54,7 +54,7 @@ p = Position(
     scalping=True,
     sequential_positions=True,
     pom_threshold=0.7,
-    num_simulations=10_000,
+    num_simulations=5_000,
     # lrr_only=False,
     # vol_threshold=2.0,
     # lookback=3,
@@ -69,7 +69,7 @@ p.run()
 # * plot the risk return payoff diagram for the portfolio
 # * this is also used to validate that the risk analysis looks
 #   the way you expect it to.
-# p.plot_payoff()
+p.plot_payoff()
 
 
 p.generate_report()
