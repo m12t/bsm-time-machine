@@ -9,7 +9,7 @@ from bsm_time_machine import Position, Underlying, Call, Put
 BASE_PATH = os.path.join("tests/data/get_subset/")
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def position(
     case_path: str, lookback: int, holding_period: int, start_date: str, end_date: str
 ):

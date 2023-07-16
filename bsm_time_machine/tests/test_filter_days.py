@@ -10,7 +10,7 @@ from bsm_time_machine import Position, Underlying, Call, Put
 BASE_PATH = os.path.join("tests/data/filter_days/")
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def position(case_path: str, trading_days: Tuple[int]):
     yield Position(
         pd.read_pickle(BASE_PATH + "cases/" + case_path),

@@ -249,7 +249,7 @@ class Position:
 
         assert self.vol_type in {"max", "real"}
 
-        assert self.df is not None
+        assert isinstance(self.df, pd.DataFrame)
 
     def _filter_days(self):
         """filter for day of the week. Eg. only include Mondays and Fridays.
@@ -598,6 +598,8 @@ class Position:
         """the kelly criterion for wagering
         p: probability of win
         b: net payout for a win"""
+        if b == 0:
+            return 0
         return p + (p - 1) / b
 
     def _scale_b(self, b: float, c: float):
