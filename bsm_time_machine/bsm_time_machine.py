@@ -175,7 +175,7 @@ class Position:
         self.df = df
         self.underlying = underlying
         self.legs = legs
-        self.holding_period = min(holding_period, min(l.tenor for l in legs))
+        self.holding_period = min(holding_period, min(leg.tenor for leg in legs))
         self.stop_loss = stop_loss
         self.scalping = scalping
         self.pom_threshold = pom_threshold
