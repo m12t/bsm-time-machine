@@ -69,6 +69,25 @@ def prices(prices_path: str):
     yield np.load(BASE_PATH + "expected/" + prices_path)
 
 
+@pytest.fixture
+def yield_expected(expected_path: str):
+    yield np.load(BASE_PATH + "expected/" + expected_path)
+
+
+@pytest.fixture
+def tensor(tensor_path: str):
+    yield np.load(BASE_PATH + "cases/" + tensor_path)
+
+
+@pytest.mark.parametrize(
+    "shift,tensor_path,case_path,expected_path",
+    [(i, f"tensor{i}.npy", f"shift{i}.pkl", f"shift{i}.npy") for i in range(45)],
+)
+def test_calc_bsm(shift, position, tensor, yield_expected):
+    position._calc_bsm(tensor, shift)
+    np.testing.assert_array_equal(tensor, yield_expected)
+
+
 @pytest.mark.parametrize(
     "right,case_path,d1_path,d2_path,spot_path,strike_path,sigma_path,tenor_path,prices_path,rfr",
     [
@@ -82,6 +101,21 @@ def prices(prices_path: str):
             f"call_sigma_{i}.npy",
             f"call_tenor_{i}.npy",
             f"call_prices_{i}.npy",
+            0.04,
+        )
+        for i in range(45)
+    ]
+    + [
+        (
+            "put",
+            "case_path_1.pkl",
+            f"put_d1_{i}.npy",
+            f"put_d2_{i}.npy",
+            f"put_spot_{i}.npy",
+            f"put_strike_{i}.npy",
+            f"put_sigma_{i}.npy",
+            f"put_tenor_{i}.npy",
+            f"put_prices_{i}.npy",
             0.04,
         )
         for i in range(45)
