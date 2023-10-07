@@ -56,3 +56,12 @@ junk/
 
 Dfs/
 
+# virtualenv
+venv/
+
+# env vars
+.env
+
+bsm_time_machine/tasklist.md
+
+.vscode
